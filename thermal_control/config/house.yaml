@@ -1,51 +1,105 @@
 rooms:
   # ── Bedroom zone ──────────────────────────────────────────────────────────
+  # sensor data source column: "Master Bedroom Temperature"
   - id: master_bedroom
-    sensor_entity: sensor.master_bedroom_temperature   # TODO: confirm entity name
-    exterior_walls: true
-  - id: kids_bedroom
-    sensor_entity: sensor.kids_bedroom_temperature     # TODO: confirm entity name
-    exterior_walls: true
-  - id: kids_playroom
-    sensor_entity: sensor.kids_playroom_temperature    # TODO: confirm entity name
-    exterior_walls: true
-  - id: anna_office
-    sensor_entity: sensor.anna_office_temperature      # TODO: confirm entity name
-    exterior_walls: true
-  - id: master_bath
-    sensor_entity: sensor.master_bath_temperature      # TODO: confirm entity name
-    exterior_walls: true
-  - id: kids_bath
-    sensor_entity: sensor.kids_bath_temperature        # TODO: confirm entity name
-    exterior_walls: true
-  - id: anna_bath
-    sensor_entity: sensor.anna_bath_temperature        # TODO: confirm entity name
+    sensor_entity: sensor.master_bedroom_temperature
+    csv_column: "Master Bedroom Temperature"
     exterior_walls: true
 
+  # sensor data source column: "Kids Bedroom Temperature"
+  - id: kids_bedroom
+    sensor_entity: sensor.kids_bedroom_temperature
+    csv_column: "Kids Bedroom Temperature"
+    exterior_walls: true
+
+  # NO sensor in extracted data — excluded from DAG targets; covered by bedroom_ac
+  - id: kids_playroom
+    sensor_entity: null
+    csv_column: null
+    exterior_walls: true
+    note: no sensor data available; excluded from thermal model
+
+  # sensor data source column: "Anna Office Temperature"
+  - id: anna_office
+    sensor_entity: sensor.anna_office_temperature
+    csv_column: "Anna Office Temperature"
+    exterior_walls: true
+
+  # sensor data source column: "Master Bath"
+  - id: master_bath
+    sensor_entity: sensor.master_bath_temperature
+    csv_column: "Master Bath"
+    exterior_walls: true
+
+  # NO sensor in extracted data — excluded from DAG targets; covered by bedroom_ac
+  - id: kids_bath
+    sensor_entity: null
+    csv_column: null
+    exterior_walls: true
+    note: no sensor data available; excluded from thermal model
+
+  # NO sensor in extracted data — excluded from DAG targets; covered by bedroom_ac
+  - id: anna_bath
+    sensor_entity: null
+    csv_column: null
+    exterior_walls: true
+    note: no sensor data available; excluded from thermal model
+
+  # Also covered by bedroom_ac's sensor (sensor_room = dining_room); used in switching model
+  - id: laundry_room
+    sensor_entity: sensor.laundry_room_temperature
+    csv_column: "Laundry Room Temperature"
+    exterior_walls: true
+    note: not mentioned in AC zones; added from observed sensor data
+
   # ── Living zone ───────────────────────────────────────────────────────────
+  # sensor data source column: "Dining Room Temperature"
+  # Also the sensor_room for bedroom_ac — critical for switching model
   - id: dining_room
-    sensor_entity: sensor.dining_room_temperature      # TODO: confirm entity name
+    sensor_entity: sensor.dining_room_temperature
+    csv_column: "Dining Room Temperature"
     exterior_walls: true
+
+  # NO sensor in extracted data
   - id: entrance
-    sensor_entity: sensor.entrance_temperature         # TODO: confirm entity name
+    sensor_entity: null
+    csv_column: null
     exterior_walls: true
+    note: no sensor data available; excluded from thermal model
+
+  # sensor data source column: "Kitchen Temperature"
+  # Also the sensor_room for living_ac — critical for switching model
   - id: kitchen
-    sensor_entity: sensor.kitchen_temperature          # TODO: confirm entity name
+    sensor_entity: sensor.kitchen_temperature
+    csv_column: "Kitchen Temperature"
     exterior_walls: true
+
+  # sensor data source column: "Family Room Temperature"
   - id: family_room
-    sensor_entity: sensor.family_room_temperature      # TODO: confirm entity name
+    sensor_entity: sensor.family_room_temperature
+    csv_column: "Family Room Temperature"
     exterior_walls: true
 
   # ── Extension zone ────────────────────────────────────────────────────────
+  # sensor data source column: "Tv Room Temperature"
+  # Also the sensor_room for extension_ac — critical for switching model
   - id: tv_room
-    sensor_entity: sensor.tv_room_temperature          # TODO: confirm entity name
+    sensor_entity: sensor.tv_room_temperature
+    csv_column: "Tv Room Temperature"
     exterior_walls: true
+
+  # sensor data source column: "Nicolas Office Temperature"
   - id: nicolas_office
-    sensor_entity: sensor.nicolas_office_temperature   # TODO: confirm entity name
+    sensor_entity: sensor.nicolas_office_temperature
+    csv_column: "Nicolas Office Temperature"
     exterior_walls: true
+
+  # NO sensor in extracted data
   - id: nicolas_bath
-    sensor_entity: sensor.nicolas_bath_temperature     # TODO: confirm entity name
+    sensor_entity: null
+    csv_column: null
     exterior_walls: true
+    note: no sensor data available; excluded from thermal model
 
 adjacency:
   # Extension ↔ Living
@@ -62,48 +116,70 @@ ac_units:
   #     This creates cross-zone entanglement: bedroom_ac switching is driven
   #     by dining_room temperature, itself influenced by living_ac.
   - id: bedroom_ac
-    climate_entity: climate.bedroom_ac                 # TODO: confirm entity name
+    ha_entity_id: bedroom_thermostat
+    climate_entity: climate.bedroom_thermostat        # TODO: confirm HA climate entity
     sensor_room: dining_room
     covers:
       - master_bedroom
       - kids_bedroom
-      - kids_playroom
       - anna_office
       - master_bath
-      - kids_bath
-      - anna_bath
+      - laundry_room
+      # kids_playroom, kids_bath, anna_bath excluded (no sensor)
 
   # ── Living AC ─────────────────────────────────────────────────────────────
   - id: living_ac
-    climate_entity: climate.living_ac                  # TODO: confirm entity name
+    ha_entity_id: thermostat_central
+    climate_entity: climate.thermostat_central        # TODO: confirm HA climate entity
     sensor_room: kitchen
     covers:
       - dining_room
-      - entrance
       - kitchen
       - family_room
+      # entrance excluded (no sensor)
 
   # ── Extension AC ──────────────────────────────────────────────────────────
   - id: extension_ac
-    climate_entity: climate.extension_ac               # TODO: confirm entity name
+    ha_entity_id: thermostat_extension
+    climate_entity: climate.thermostat_extension      # TODO: confirm HA climate entity
     sensor_room: tv_room
     covers:
       - tv_room
       - nicolas_office
-      - nicolas_bath
+      # nicolas_bath excluded (no sensor)
 
-outdoor_sensor: sensor.outdoor_temperature             # TODO: confirm entity name
+outdoor_sensor: sensor.outdoor_temperature            # TODO: confirm entity name
+
+# Pool temp column present in CSV ("Pool Temp") — can serve as outdoor proxy
+# if a dedicated outdoor sensor is unavailable.
+pool_temp_csv_column: "Pool Temp"
 
 location:
   lat: 26.0765
   lon: -80.2521
   timezone: America/New_York
 
-# ── Filled in after pre-implementation sensor checks (Phase 0 → Phase 1) ───
-# Run the sensor resolution and hysteresis checks on raw HA data before
-# proceeding to any model or MPC code.
+# ── Data source files ─────────────────────────────────────────────────────
+data:
+  room_temps_csv: homeassistant_temp.csv
+  ac_states_csv: homeassistant_states.csv
+  # Room temp CSV is at 5-minute resolution; AC states are event-driven.
+  # Both will be resampled to 10-minute intervals in preprocess.py.
+  # Filter out sentinel value: temps <= -10°F are Zigbee dropout artifacts.
+  sentinel_filter_f: -10.0
+  overlap_start: "2025-05-31"
+  overlap_end: "2026-06-08"
+
+# ── Pre-implementation sensor checks (completed) ──────────────────────────
+# All three AC sensors (bedroom_thermostat, thermostat_central,
+# thermostat_extension) report in whole °F only — non-zero diffs are all
+# multiples of 1°F. Sigmoid relaxation is inappropriate; use MILP.
+#
+# Hysteresis: ~96% of both turn-on and turn-off transitions occur at
+# delta = 0 (sensor == setpoint). Residual non-zero values are timing
+# artifacts from event-log lag. No meaningful deadband detected.
 sensor_resolution:
-  unit: fahrenheit        # TODO: confirm after sensor diff check
-  rounded: null           # TODO: true if all non-zero diffs are multiples of ~0.556°C
-  setpoint_step_f: 1      # TODO: confirm minimum setpoint increment
-  hysteresis_f: null      # TODO: 0 if not detected; else measured deadband in °F
+  unit: fahrenheit
+  rounded: true
+  setpoint_step_f: 1
+  hysteresis_f: 0
