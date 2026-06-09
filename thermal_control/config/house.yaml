@@ -1,0 +1,109 @@
+rooms:
+  # ── Bedroom zone ──────────────────────────────────────────────────────────
+  - id: master_bedroom
+    sensor_entity: sensor.master_bedroom_temperature   # TODO: confirm entity name
+    exterior_walls: true
+  - id: kids_bedroom
+    sensor_entity: sensor.kids_bedroom_temperature     # TODO: confirm entity name
+    exterior_walls: true
+  - id: kids_playroom
+    sensor_entity: sensor.kids_playroom_temperature    # TODO: confirm entity name
+    exterior_walls: true
+  - id: anna_office
+    sensor_entity: sensor.anna_office_temperature      # TODO: confirm entity name
+    exterior_walls: true
+  - id: master_bath
+    sensor_entity: sensor.master_bath_temperature      # TODO: confirm entity name
+    exterior_walls: true
+  - id: kids_bath
+    sensor_entity: sensor.kids_bath_temperature        # TODO: confirm entity name
+    exterior_walls: true
+  - id: anna_bath
+    sensor_entity: sensor.anna_bath_temperature        # TODO: confirm entity name
+    exterior_walls: true
+
+  # ── Living zone ───────────────────────────────────────────────────────────
+  - id: dining_room
+    sensor_entity: sensor.dining_room_temperature      # TODO: confirm entity name
+    exterior_walls: true
+  - id: entrance
+    sensor_entity: sensor.entrance_temperature         # TODO: confirm entity name
+    exterior_walls: true
+  - id: kitchen
+    sensor_entity: sensor.kitchen_temperature          # TODO: confirm entity name
+    exterior_walls: true
+  - id: family_room
+    sensor_entity: sensor.family_room_temperature      # TODO: confirm entity name
+    exterior_walls: true
+
+  # ── Extension zone ────────────────────────────────────────────────────────
+  - id: tv_room
+    sensor_entity: sensor.tv_room_temperature          # TODO: confirm entity name
+    exterior_walls: true
+  - id: nicolas_office
+    sensor_entity: sensor.nicolas_office_temperature   # TODO: confirm entity name
+    exterior_walls: true
+  - id: nicolas_bath
+    sensor_entity: sensor.nicolas_bath_temperature     # TODO: confirm entity name
+    exterior_walls: true
+
+adjacency:
+  # Extension ↔ Living
+  - [tv_room, family_room]
+  # Living zone internal
+  - [family_room, kitchen]
+  - [kitchen, dining_room]
+  - [dining_room, entrance]
+  - [entrance, kitchen]
+
+ac_units:
+  # ── Bedroom AC ────────────────────────────────────────────────────────────
+  # ⚠️  Controller sensor is in dining_room, which is cooled by living_ac.
+  #     This creates cross-zone entanglement: bedroom_ac switching is driven
+  #     by dining_room temperature, itself influenced by living_ac.
+  - id: bedroom_ac
+    climate_entity: climate.bedroom_ac                 # TODO: confirm entity name
+    sensor_room: dining_room
+    covers:
+      - master_bedroom
+      - kids_bedroom
+      - kids_playroom
+      - anna_office
+      - master_bath
+      - kids_bath
+      - anna_bath
+
+  # ── Living AC ─────────────────────────────────────────────────────────────
+  - id: living_ac
+    climate_entity: climate.living_ac                  # TODO: confirm entity name
+    sensor_room: kitchen
+    covers:
+      - dining_room
+      - entrance
+      - kitchen
+      - family_room
+
+  # ── Extension AC ──────────────────────────────────────────────────────────
+  - id: extension_ac
+    climate_entity: climate.extension_ac               # TODO: confirm entity name
+    sensor_room: tv_room
+    covers:
+      - tv_room
+      - nicolas_office
+      - nicolas_bath
+
+outdoor_sensor: sensor.outdoor_temperature             # TODO: confirm entity name
+
+location:
+  lat: 26.0765
+  lon: -80.2521
+  timezone: America/New_York
+
+# ── Filled in after pre-implementation sensor checks (Phase 0 → Phase 1) ───
+# Run the sensor resolution and hysteresis checks on raw HA data before
+# proceeding to any model or MPC code.
+sensor_resolution:
+  unit: fahrenheit        # TODO: confirm after sensor diff check
+  rounded: null           # TODO: true if all non-zero diffs are multiples of ~0.556°C
+  setpoint_step_f: 1      # TODO: confirm minimum setpoint increment
+  hysteresis_f: null      # TODO: 0 if not detected; else measured deadband in °F
