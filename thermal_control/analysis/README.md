@@ -25,7 +25,20 @@ trend that inflates all level-based correlations in a Florida climate.
 - `kitchen` has a lower within-zone correlation (~0.17–0.19 with
   neighbours), consistent with counter-heat plateau distortion.
 
-### `02_sensor_spot_checks.py`
+### `03_ac_duty_cycle.py`
+
+Plots the typical 24-hour duty cycle for all three AC units — average
+cooling minutes per hour of day, computed over May 2025 – Jun 2026.
+
+**Key findings:**
+- `bedroom_ac` peaks overnight and early morning (sleep hours),
+  consistent with cooling the bedrooms at night.
+- `living_ac` peaks midday and afternoon (occupied living areas).
+- `extension_ac` peaks during office hours.
+
+Overall duty cycles: bedroom_ac ~19 min/h, living_ac ~6 min/h,
+extension_ac ~8 min/h. The bedroom AC runs more because its sensor
+(in the dining room) is exposed to heat from the open living area.
 
 Temperature comparison plots for sensors identified as potentially
 unreliable:
