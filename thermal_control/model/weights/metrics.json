@@ -1,0 +1,58 @@
+{
+  "anna_office": {
+    "mae_train_f": 0.1004,
+    "mae_val_f": 0.1055,
+    "mae_val_c": 0.0586,
+    "alpha": 0.01,
+    "n_features": 5
+  },
+  "dining_room": {
+    "mae_train_f": 0.0823,
+    "mae_val_f": 0.1034,
+    "mae_val_c": 0.0574,
+    "alpha": 0.01,
+    "n_features": 4
+  },
+  "family_room": {
+    "mae_train_f": 0.0714,
+    "mae_val_f": 0.1022,
+    "mae_val_c": 0.0568,
+    "alpha": 100.0,
+    "n_features": 6
+  },
+  "kids_bedroom": {
+    "mae_train_f": 0.1112,
+    "mae_val_f": 0.1196,
+    "mae_val_c": 0.0664,
+    "alpha": 0.01,
+    "n_features": 3
+  },
+  "kitchen": {
+    "mae_train_f": 0.0642,
+    "mae_val_f": 0.0641,
+    "mae_val_c": 0.0356,
+    "alpha": 0.01,
+    "n_features": 6
+  },
+  "master_bedroom": {
+    "mae_train_f": 0.1077,
+    "mae_val_f": 0.1386,
+    "mae_val_c": 0.077,
+    "alpha": 0.01,
+    "n_features": 3
+  },
+  "nicolas_office": {
+    "mae_train_f": 0.0932,
+    "mae_val_f": 0.0381,
+    "mae_val_c": 0.0212,
+    "alpha": 0.01,
+    "n_features": 3
+  },
+  "tv_room": {
+    "mae_train_f": 0.0569,
+    "mae_val_f": 0.0773,
+    "mae_val_c": 0.043,
+    "alpha": 0.01,
+    "n_features": 4
+  }
+}
