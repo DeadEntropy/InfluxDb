@@ -45,13 +45,6 @@ rooms:
     exterior_walls: true
     note: no sensor data available; excluded from thermal model
 
-  # Also covered by bedroom_ac's sensor (sensor_room = dining_room); used in switching model
-  - id: laundry_room
-    sensor_entity: sensor.laundry_room_temperature
-    csv_column: "Laundry Room Temperature"
-    exterior_walls: true
-    note: not mentioned in AC zones; added from observed sensor data
-
   # ── Living zone ───────────────────────────────────────────────────────────
   # sensor data source column: "Dining Room Temperature"
   # Also the sensor_room for bedroom_ac — critical for switching model
@@ -124,8 +117,8 @@ ac_units:
       - kids_bedroom
       - anna_office
       - master_bath
-      - laundry_room
       # kids_playroom, kids_bath, anna_bath excluded (no sensor)
+      # laundry_room excluded (dryer causes severe temperature distortion)
 
   # ── Living AC ─────────────────────────────────────────────────────────────
   - id: living_ac
@@ -148,11 +141,10 @@ ac_units:
       - nicolas_office
       # nicolas_bath excluded (no sensor)
 
-outdoor_sensor: sensor.outdoor_temperature            # TODO: confirm entity name
-
-# Pool temp column present in CSV ("Pool Temp") — can serve as outdoor proxy
-# if a dedicated outdoor sensor is unavailable.
-pool_temp_csv_column: "Pool Temp"
+outdoor_sensor: sensor.outdoor_temperature            # TODO: confirm HA entity name
+# Outdoor temperature is measured by the pool sensor mounted under the
+# house soffit. CSV column: "Pool Temp". Used as T_outdoor in the DAG.
+outdoor_csv_column: "Pool Temp"
 
 location:
   lat: 26.0765
