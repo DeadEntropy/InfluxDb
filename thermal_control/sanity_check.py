@@ -18,7 +18,7 @@ import seaborn as sns
 # ── Config ────────────────────────────────────────────────────────────────
 CSV_PATH      = "homeassistant_temp.csv"
 SENTINEL_F    = -10.0   # Zigbee dropout sentinel
-RESAMPLE      = "1D"
+RESAMPLE      = "10min"
 OUTPUT_PNG    = "thermal_control/sanity_check_correlation.png"
 
 ROOM_COLUMNS = {
@@ -54,10 +54,14 @@ df.columns = list(ROOM_COLUMNS.keys())
 
 # Drop sentinel values then resample
 df[df <= SENTINEL_F] = np.nan
-df = df.resample(RESAMPLE).median()
+df = df.resample(RESAMPLE).mean()
 
 # Restrict to period where all sensors overlap with AC states
 df = df["2025-06-01":]
+
+# First differences — removes shared outdoor temperature trend,
+# leaving only AC-driven and conduction-driven temperature changes
+df = df.diff().dropna()
 
 # Drop timestamps where any room is NaN
 df_clean = df.dropna()
@@ -132,7 +136,7 @@ fig = sns.clustermap(
     row_colors=row_colors,
     col_colors=row_colors,
 )
-fig.fig.suptitle("Room Temperature Correlations\n(coloured by expected AC zone)", y=1.02)
+fig.fig.suptitle("Room Temperature Change Correlations (Δ 10-min)\n(coloured by expected AC zone)", y=1.02)
 
 # Add legend
 from matplotlib.patches import Patch
