@@ -18,7 +18,7 @@ import seaborn as sns
 # ── Config ────────────────────────────────────────────────────────────────
 CSV_PATH      = "homeassistant_temp.csv"
 SENTINEL_F    = -10.0   # Zigbee dropout sentinel
-RESAMPLE      = "10min"
+RESAMPLE      = "2h"
 OUTPUT_PNG    = "thermal_control/sanity_check_correlation.png"
 
 ROOM_COLUMNS = {
@@ -54,7 +54,7 @@ df.columns = list(ROOM_COLUMNS.keys())
 
 # Drop sentinel values then resample
 df[df <= SENTINEL_F] = np.nan
-df = df.resample(RESAMPLE).mean()
+df = df.resample(RESAMPLE).median()
 
 # Restrict to period where all sensors overlap with AC states
 df = df["2025-06-01":]
