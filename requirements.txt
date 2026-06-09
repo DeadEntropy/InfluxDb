@@ -1,0 +1,11 @@
+influxdb[dataframe]
+python-dotenv
+pandas
+numpy
+tqdm
+matplotlib
+plotly
+python-dateutil
+pytz
+meteostat
+jupyterlab
