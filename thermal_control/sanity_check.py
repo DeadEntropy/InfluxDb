@@ -18,7 +18,7 @@ import seaborn as sns
 # ── Config ────────────────────────────────────────────────────────────────
 CSV_PATH      = "homeassistant_temp.csv"
 SENTINEL_F    = -10.0   # Zigbee dropout sentinel
-RESAMPLE      = "2h"
+RESAMPLE      = "1D"
 OUTPUT_PNG    = "thermal_control/sanity_check_correlation.png"
 
 ROOM_COLUMNS = {
