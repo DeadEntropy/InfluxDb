@@ -25,11 +25,8 @@ rooms:
     csv_column: "Anna Office Temperature"
     exterior_walls: true
 
-  # sensor data source column: "Master Bath"
-  - id: master_bath
-    sensor_entity: sensor.master_bath_temperature
-    csv_column: "Master Bath"
-    exterior_walls: true
+  # master_bath excluded: shower activity causes large temperature spikes
+  # that would corrupt the thermal model; not a comfort target anyway.
 
   # NO sensor in extracted data — excluded from DAG targets; covered by bedroom_ac
   - id: kids_bath
@@ -102,6 +99,9 @@ adjacency:
   - [kitchen, dining_room]
   - [dining_room, entrance]
   - [entrance, kitchen]
+  # anna_office is cooled by bedroom_ac but open to the living zone
+  - [anna_office, kitchen]
+  - [anna_office, family_room]
 
 ac_units:
   # ── Bedroom AC ────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ ac_units:
       - master_bedroom
       - kids_bedroom
       - anna_office
-      - master_bath
+      # master_bath excluded (shower distortion)
       # kids_playroom, kids_bath, anna_bath excluded (no sensor)
       # laundry_room excluded (dryer causes severe temperature distortion)
 
