@@ -1,0 +1,52 @@
+{
+  "anna_office": [
+    "T_anna_office_lag1",
+    "dT_outdoor",
+    "dT_kitchen",
+    "dT_family_room",
+    "ac_on_bedroom_ac"
+  ],
+  "dining_room": [
+    "T_dining_room_lag1",
+    "dT_outdoor",
+    "dT_kitchen",
+    "ac_on_living_ac"
+  ],
+  "family_room": [
+    "T_family_room_lag1",
+    "dT_outdoor",
+    "dT_tv_room",
+    "dT_kitchen",
+    "dT_anna_office",
+    "ac_on_living_ac"
+  ],
+  "kids_bedroom": [
+    "T_kids_bedroom_lag1",
+    "dT_outdoor",
+    "ac_on_bedroom_ac"
+  ],
+  "kitchen": [
+    "T_kitchen_lag1",
+    "dT_outdoor",
+    "dT_family_room",
+    "dT_dining_room",
+    "dT_anna_office",
+    "ac_on_living_ac"
+  ],
+  "master_bedroom": [
+    "T_master_bedroom_lag1",
+    "dT_outdoor",
+    "ac_on_bedroom_ac"
+  ],
+  "nicolas_office": [
+    "T_nicolas_office_lag1",
+    "dT_outdoor",
+    "ac_on_extension_ac"
+  ],
+  "tv_room": [
+    "T_tv_room_lag1",
+    "dT_outdoor",
+    "dT_family_room",
+    "ac_on_extension_ac"
+  ]
+}
