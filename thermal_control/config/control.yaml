@@ -1,0 +1,30 @@
+mpc:
+  horizon_steps: 18          # look-ahead window (18 × 10 min = 3 hours)
+  tick_minutes: 10           # how often the MPC runs
+
+  # Bang-bang setpoint values (°F)
+  # Force ON : setpoint set below any realistic indoor temperature
+  # Force OFF: setpoint set above any realistic indoor temperature
+  setpoint_on_f:  65         # forces AC on  (sensor always > 65°F in Florida)
+  setpoint_off_f: 84         # forces AC off (sensor never reaches 84°F indoors)
+
+  # Energy penalty weight — small value that breaks ties by preferring
+  # fewer ACs running when multiple combinations achieve equal comfort
+  energy_weight: 0.05
+
+targets:
+  # Comfort band in °F — penalty applied outside this range
+  default:
+    min_f: 72
+    max_f: 76
+
+  # Per-room overrides (optional)
+  # nicolas_office:
+  #   min_f: 70
+  #   max_f: 74
+
+ac_power:
+  # Approximate watts when actively cooling (for energy penalty scaling)
+  bedroom_ac:   1200
+  living_ac:    1000
+  extension_ac:  900

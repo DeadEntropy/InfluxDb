@@ -52,8 +52,14 @@ air from their respective AC zones.
 
 ## Key design decisions
 
-- **MILP solver**: AC sensors report in whole °F — sigmoid relaxation
-  is inappropriate; integer setpoints require mixed-integer programming.
+- **Bang-bang control**: each AC is either fully ON (setpoint=65°F) or
+  fully OFF (setpoint=84°F). This is not a simplification — the hardware
+  switches on an integer threshold so fractional setpoints give no extra
+  resolution. 2³ = 8 combinations are evaluated at each tick.
+- **Model breaks the entanglement**: the bedroom AC sensor is in the
+  dining room (cooled by the living AC). Without the model, the bedroom
+  temperature is uncontrollable. The MPC reads the actual bedroom sensor
+  and sets the bedroom AC setpoint directly, bypassing the broken loop.
 - **No hysteresis**: all three AC units switch at delta = 0 (confirmed
   from data; residual non-zero transitions are logging lag artefacts).
 - **Ridge regression per room**: interpretable, stable under correlated
