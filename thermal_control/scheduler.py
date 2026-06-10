@@ -147,7 +147,16 @@ def run():
 
                 state = fill_missing(current_temps, sensor_cache, sim.rooms, FALLBACK_TEMP_F)
 
-                # 2. Outdoor temperature
+                # 2. Read AC states — mode + action logged each tick so anomalies
+                #    (unexpected mode drift) are visible in the log history.
+                ac_states = ha.get_ac_states(house)
+                for ac_id, s in ac_states.items():
+                    logger.info(f"  {ac_id}: mode={s['hvac_mode']}  "
+                                f"action={s['hvac_action']}  "
+                                f"sensor={s['ac_sensor_temp_f']:.1f}°F  "
+                                f"setpoint={s['setpoint_f']}°F")
+
+                # 3. Outdoor temperature
                 outdoor = ha.get_outdoor_temp(house)
                 if outdoor is not None:
                     outdoor_cache = (outdoor, datetime.utcnow())
@@ -156,7 +165,7 @@ def run():
                     outdoor, _ = outdoor_cache
                     logger.warning(f"Outdoor sensor unavailable, using cached {outdoor:.1f}°F")
 
-                # 3. Build outdoor series for MPC horizon
+                # 5. Build outdoor series for MPC horizon
                 horizon = control["mpc"]["horizon_steps"]
                 if control["mpc"].get("use_forecast"):
                     forecast = get_forecast_f(
@@ -173,11 +182,23 @@ def run():
                 else:
                     outdoor_series = [outdoor] * horizon
 
-                # 4. Solve MPC
+                # 6. Solve MPC
                 setpoints = mpc.solve(state, outdoor_series)
                 mpc.explain()
 
-                # 5. Apply setpoints
+                # 7. Correct hvac_mode for any ON-commanded unit that has drifted
+                #    out of 'cool' mode (HA restart, power blip). Units are normally
+                #    always left in 'cool' so this fires only on anomalous ticks.
+                setpoint_on = control["mpc"]["setpoint_on_f"]
+                for ac_id, sp in setpoints.items():
+                    if sp == setpoint_on and ac_states[ac_id]["hvac_mode"] != "cool":
+                        logger.warning(
+                            f"{ac_id}: hvac_mode='{ac_states[ac_id]['hvac_mode']}' "
+                            f"but MPC wants ON — correcting to 'cool'"
+                        )
+                        ha.set_hvac_mode(ac_id, "cool", house)
+
+                # 8. Apply setpoints (includes read-back verification)
                 logger.info("Applying setpoints:")
                 ha.apply_setpoints(setpoints, house)
 

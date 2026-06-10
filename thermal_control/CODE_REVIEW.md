@@ -100,17 +100,33 @@ every tick it's missing, and surface it (HA notification — you already have HA
 Fabricated data should never silently steer a controller.
 
 ### 5. ACs may not be in a cooling-capable mode — `set_temperature` alone doesn't guarantee cooling
-- [ ] `ha_bridge/controller.py:100-117`
+- [x] `ha_bridge/controller.py`, `scheduler.py` — **Fixed 2026-06-10**
 
 `climate/set_temperature` sets the target but does not change `hvac_mode`. If a
-unit is `off` (someone used the remote, power blip, HA restart default), writing
-65°F does nothing and the MPC believes it commanded cooling. There is no
-read-back verification anywhere in the loop.
+unit is `off` (power blip, HA restart default), writing 65°F does nothing and the
+MPC believes it commanded cooling. There is no read-back verification anywhere
+in the loop.
 
-**Proposed fix:** each tick (or on each ON command), check the climate entity's
-`state`/`hvac_mode`; if it can't cool, correct it (or at minimum log loudly and
-notify). After applying setpoints, read back and warn on mismatch. (See open
-question Q1 about how the units are normally operated.)
+**Q1 answered:** units are always operated in `cool` mode by changing the target
+temperature; they are never manually turned off. Mode drift can only occur from
+HA restarts or power blips, so correction is a rare safety net, not a routine action.
+
+**Fix applied — three changes:**
+
+1. `get_ac_states()` now returns `hvac_mode` (the entity `state` field) alongside
+   `hvac_action`. No extra API call — same response was already fetched.
+
+2. `scheduler.py` calls `get_ac_states()` at the start of every tick and logs
+   `mode`, `action`, `sensor temp`, and `setpoint` for each unit. This makes mode
+   drift immediately visible in the log history. After solving the MPC, any ON-
+   commanded unit whose `hvac_mode != "cool"` is corrected via the new
+   `set_hvac_mode()` helper before setpoints are written. In normal operation
+   (always `cool`) this block logs nothing and issues no extra calls.
+
+3. `apply_setpoints()` now reads back each climate entity's `temperature`
+   attribute after the write loop and logs a `WARNING` on any mismatch. This
+   catches silent HA failures where the HTTP call returns 200 but the entity
+   state was not actually updated.
 
 ---
 

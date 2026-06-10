@@ -78,8 +78,8 @@ def get_outdoor_temp(house_config):
 
 def get_ac_states(house_config):
     """
-    Returns {ac_id: {ac_sensor_temp_f, setpoint_f, hvac_action, ac_on}}
-    using the climate entity's current_temperature attribute.
+    Returns {ac_id: {hvac_mode, ac_sensor_temp_f, setpoint_f, hvac_action, ac_on}}
+    using the climate entity's state and attributes.
     Raises if any climate entity is unreachable (they are critical).
     """
     result = {}
@@ -87,6 +87,7 @@ def get_ac_states(house_config):
         s     = _get_state(ac["climate_entity"])
         attrs = s["attributes"]
         result[ac["id"]] = {
+            "hvac_mode":        s["state"],
             "ac_sensor_temp_f": float(attrs["current_temperature"]),
             "setpoint_f":       int(attrs["temperature"]),
             "hvac_action":      attrs.get("hvac_action", "unknown"),
@@ -97,12 +98,30 @@ def get_ac_states(house_config):
 
 # ── Writes ────────────────────────────────────────────────────────────────
 
+def set_hvac_mode(ac_id, mode, house_config):
+    """
+    Sets the hvac_mode of a climate entity (e.g. "cool", "off").
+    Used as a corrective action when a unit's mode has drifted unexpectedly.
+    """
+    entity = next(ac["climate_entity"] for ac in house_config["ac_units"] if ac["id"] == ac_id)
+    url    = f"{os.environ['HA_URL']}/api/services/climate/set_hvac_mode"
+    r = requests.post(
+        url,
+        json={"entity_id": entity, "hvac_mode": mode},
+        headers=_headers(),
+        timeout=_TIMEOUT,
+    )
+    r.raise_for_status()
+    logger.warning(f"  {ac_id} ({entity}): hvac_mode → {mode}")
+
+
 def apply_setpoints(optimal_setpoints, house_config):
     """
-    Writes integer setpoints (°F) to HA climate entities.
+    Writes integer setpoints (°F) to HA climate entities, then reads back
+    to verify each write was applied.
     optimal_setpoints: {ac_id: setpoint_F}
     """
-    url = f"{os.environ['HA_URL']}/api/services/climate/set_temperature"
+    url    = f"{os.environ['HA_URL']}/api/services/climate/set_temperature"
     ac_map = {ac["id"]: ac["climate_entity"] for ac in house_config["ac_units"]}
 
     failures = []
@@ -122,3 +141,20 @@ def apply_setpoints(optimal_setpoints, house_config):
             failures.append(ac_id)
     if failures:
         raise RuntimeError(f"Setpoint write failed for: {failures}")
+
+    # Read back and warn on any mismatch — catches silent HA failures where
+    # the HTTP call succeeds but the entity state was not actually updated.
+    for ac in house_config["ac_units"]:
+        ac_id = ac["id"]
+        if ac_id not in optimal_setpoints:
+            continue
+        try:
+            s      = _get_state(ac["climate_entity"])
+            actual = int(s["attributes"].get("temperature", -1))
+            expected = int(optimal_setpoints[ac_id])
+            if actual != expected:
+                logger.warning(
+                    f"  {ac_id}: readback mismatch — wrote {expected}°F, got {actual}°F"
+                )
+        except Exception as exc:
+            logger.warning(f"  {ac_id}: readback check failed — {exc}")
