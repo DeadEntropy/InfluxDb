@@ -27,6 +27,7 @@ Outputs:
 """
 
 import json
+import sklearn
 import yaml
 import joblib
 import numpy as np
@@ -142,6 +143,6 @@ for room_id in rooms_to_model:
 with open(WEIGHTS_DIR / "feature_lists.json", "w") as f:
     json.dump(feature_lists, f, indent=2)
 with open(WEIGHTS_DIR / "metrics.json", "w") as f:
-    json.dump(metrics, f, indent=2)
+    json.dump({"sklearn_version": sklearn.__version__, **metrics}, f, indent=2)
 
 print(f"\nModels saved → {WEIGHTS_DIR}/")

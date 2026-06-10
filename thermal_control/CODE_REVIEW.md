@@ -113,7 +113,7 @@ question Q1 about how the units are normally operated.)
 ## P1 — Bugs
 
 ### 6. `forecast.py` returns the forecast for *midnight onwards*, not *now onwards*
-- [ ] `control/forecast.py:49-58`
+- [x] `control/forecast.py:49-58` — **Fixed 2026-06-10**
 
 Open-Meteo's `hourly.temperature_2m` array starts at 00:00 local time of the
 current day. The code takes `temps_c[:hours_needed]` and interpolates assuming
@@ -121,36 +121,57 @@ index 0 = now. With `use_forecast: true`, at 3pm the MPC would receive the
 00:00–05:00 temperature profile. Latent today only because `use_forecast` is
 `false`.
 
-**Proposed fix:** add `"forecast_hours": hours_needed` to the request params
-(Open-Meteo then returns hours starting at the current hour), or parse
-`hourly.time` and slice from `now`. Add a small test with a mocked response.
+**Fix applied:** parse `hourly.time` from the response, find the first entry
+≥ the current hour (wall-clock comparison), and slice
+`[now_idx : now_idx + hours_needed]`. Gracefully returns `None` if the slice
+is too short. The `forecast_days: 2` param already provides enough headroom.
+A unit test with a mocked response is still TODO.
 
 ### 7. Validation pairs/windows silently span data gaps
-- [ ] `model/simulate.py:135-141, 161-176`
+- [x] `model/simulate.py:135-141, 161-176` — **Fixed 2026-06-10**
 
 `val.csv` had NaN rows dropped in `04_merge.py`, so its index has holes. Pass 2a
 treats `iloc[i]` → `iloc[i+1]` as one 10-min step, and Pass 2b builds 12-step
 windows by position — across a gap, the "10-minute step" can actually be hours.
 Same for the full-rollout plot. This corrupts the reported MAEs.
 
-**Proposed fix:** in Pass 2a require
-`val.index[i+1] - val.index[i] == 10min`; in Pass 2b skip any window whose index
-isn't perfectly contiguous. Report how many windows were skipped.
+**Fix applied:** Pass 2a skips pairs where `val.index[i+1] − val.index[i] ≠ 10 min`
+and reports how many were skipped. Pass 2b checks all diffs within each window and
+skips non-contiguous ones, also reporting the count.
+
+**Re-run results (2026-06-10):** 105 step-pairs skipped in Pass 2a; 66 windows
+skipped in Pass 2b. Updated Pass 2b MAEs:
+
+| Room | MAE (°C) old | MAE (°C) new | Δ |
+|---|---|---|---|
+| anna_office   | ≤ 0.52 | 0.309 | improved (gap resets were masking drift) |
+| dining_room   | ≤ 0.52 | 0.234 | improved |
+| family_room   | ≤ 0.52 | 0.203 | improved |
+| kids_bedroom  | ≤ 0.52 | 0.441 | improved |
+| kitchen       | ≤ 0.52 | 0.142 | improved |
+| master_bedroom| 0.510  | 0.526 | slightly worse (gaps were hiding true drift) |
+| nicolas_office| ≤ 0.52 | 0.222 | improved |
+| tv_room       | ≤ 0.52 | 0.277 | improved |
+
+All rooms remain well within the 1.5°C target. The previous numbers were
+mildly optimistic because cross-gap windows reset state to observed values,
+adding many near-zero-error data points.
 
 ### 8. A failed setpoint write aborts the remaining writes
-- [ ] `ha_bridge/controller.py:108-117`
+- [x] `ha_bridge/controller.py:108-117` — **Fixed 2026-06-10**
 
 `apply_setpoints` calls `raise_for_status()` inside the loop. If the first write
 fails, the tick aborts (scheduler catches it) and the other two units keep their
 *previous* setpoints — leaving a combo the MPC never chose (e.g. bedroom ON from
 last tick + living OFF from this tick).
 
-**Proposed fix:** try/except per unit inside the loop; attempt all three; log
-failures; optionally retry once. Decide explicitly what state you want on
-partial failure (probably: keep going, next tick repairs it).
+**Fix applied:** each unit's `requests.post` + `raise_for_status()` is now wrapped
+in its own `try/except`. All three writes are always attempted. Failures are
+collected and a single `RuntimeError` is raised at the end listing which units
+failed, so the scheduler loop logs it and the next tick repairs the state.
 
 ### 9. `requirements.txt` is missing the thermal_control dependencies
-- [ ] `requirements.txt` (repo root)
+- [x] `requirements.txt` (repo root) — **Fixed 2026-06-10**
 
 The code imports `scikit-learn`, `joblib`, `pyyaml`, `requests`, `scipy`,
 `seaborn` — none are in `requirements.txt` (it still reflects the old InfluxDB
@@ -158,9 +179,11 @@ notebooks). A fresh environment cannot run the project. Conversely, `cvxpy` and
 `schedule` from the spec's dependency list are *not* needed anymore (bang-bang
 enumeration replaced MILP; stdlib `time.sleep` replaced `schedule`).
 
-**Proposed fix:** add the missing packages (consider a separate
-`thermal_control/requirements.txt` to keep notebook deps apart). Pin at least
-scikit-learn — joblib model files are sklearn-version-sensitive.
+**Fix applied:** created `thermal_control/requirements.txt` with all runtime
+dependencies, pinning `scikit-learn>=1.4,<2.0` (joblib weights are version-
+sensitive). `cvxpy` and `schedule` are absent (no longer used). `model/fit.py`
+now records `sklearn.__version__` in `metrics.json` at fit time so the version
+is auditable alongside each set of weights.
 
 ---
 

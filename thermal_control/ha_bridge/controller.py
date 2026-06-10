@@ -105,13 +105,20 @@ def apply_setpoints(optimal_setpoints, house_config):
     url = f"{os.environ['HA_URL']}/api/services/climate/set_temperature"
     ac_map = {ac["id"]: ac["climate_entity"] for ac in house_config["ac_units"]}
 
+    failures = []
     for ac_id, sp in optimal_setpoints.items():
         entity = ac_map[ac_id]
-        r = requests.post(
-            url,
-            json={"entity_id": entity, "temperature": int(sp)},
-            headers=_headers(),
-            timeout=_TIMEOUT,
-        )
-        r.raise_for_status()
-        logger.info(f"  {ac_id} ({entity}): setpoint → {sp}°F")
+        try:
+            r = requests.post(
+                url,
+                json={"entity_id": entity, "temperature": int(sp)},
+                headers=_headers(),
+                timeout=_TIMEOUT,
+            )
+            r.raise_for_status()
+            logger.info(f"  {ac_id} ({entity}): setpoint → {sp}°F")
+        except Exception as exc:
+            logger.error(f"  {ac_id} ({entity}): write failed — {exc}")
+            failures.append(ac_id)
+    if failures:
+        raise RuntimeError(f"Setpoint write failed for: {failures}")

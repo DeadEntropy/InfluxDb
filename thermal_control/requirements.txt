@@ -1,0 +1,10 @@
+scikit-learn>=1.4,<2.0
+joblib
+pyyaml
+requests
+scipy
+seaborn
+numpy
+pandas
+matplotlib
+python-dotenv

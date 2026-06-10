@@ -131,8 +131,13 @@ if __name__ == "__main__":
 
     # ── Pass 2a: one-step-ahead with simulated switching ──────────────────
     print("── Pass 2a: one-step-ahead (simulated switching) ───────────────────")
-    records = []
+    _10MIN = pd.Timedelta("10min")
+    records  = []
+    skipped_2a = 0
     for i in range(len(val) - 1):
+        if val.index[i + 1] - val.index[i] != _10MIN:
+            skipped_2a += 1
+            continue
         row      = val.iloc[i]
         row_next = val.iloc[i + 1]
         state    = {r: row[f"T_{r}"] for r in ROOMS}
@@ -145,6 +150,8 @@ if __name__ == "__main__":
                 "actual": row_next[f"T_{room_id}"],
                 "pred":   next_state[room_id],
             })
+    if skipped_2a:
+        print(f"  (skipped {skipped_2a} pairs spanning data gaps)")
 
     df_1step = pd.DataFrame(records)
     print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}")
@@ -157,9 +164,14 @@ if __name__ == "__main__":
     # ── Pass 2b: full 2-hour rollout windows ──────────────────────────────
     print("\n── Pass 2b: 2-hour rollout windows (simulated switching) ───────────")
     mae_per_room = {r: [] for r in ROOMS}
+    skipped_2b   = 0
 
     for start in range(0, len(val) - WINDOW, WINDOW):
-        chunk     = val.iloc[start: start + WINDOW + 1]
+        chunk = val.iloc[start: start + WINDOW + 1]
+        diffs = chunk.index.to_series().diff().dropna()
+        if not (diffs == _10MIN).all():
+            skipped_2b += 1
+            continue
         init      = {r: chunk.iloc[0][f"T_{r}"] for r in ROOMS}
         setpoints = [{a: chunk.iloc[t][f"setpoint_{a}"] for a in AC_IDS}
                      for t in range(WINDOW)]
@@ -175,6 +187,8 @@ if __name__ == "__main__":
                 err = abs(states[t][room_id] - actual_row[f"T_{room_id}"])
                 mae_per_room[room_id].append(err)
 
+    if skipped_2b:
+        print(f"  (skipped {skipped_2b} non-contiguous windows spanning data gaps)")
     print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}  {'< 1.5°C?':>10}")
     print("─" * 54)
     for room_id in sorted(ROOMS):

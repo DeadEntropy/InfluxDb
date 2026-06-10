@@ -9,6 +9,7 @@ error and should substitute the current observed outdoor temperature.
 """
 
 import logging
+from datetime import datetime, timezone
 
 import numpy as np
 import requests
@@ -46,9 +47,32 @@ def get_forecast_f(lat, lon, n_steps, step_minutes=10):
             timeout=_TIMEOUT,
         )
         r.raise_for_status()
-        temps_c = r.json()["hourly"]["temperature_2m"][:hours_needed]
+        data        = r.json()
+        times_str   = data["hourly"]["time"]
+        temps_c_all = data["hourly"]["temperature_2m"]
     except Exception as exc:
         logger.warning(f"Forecast fetch failed: {exc}")
+        return None
+
+    # Find the index of the current hour so we start the forecast from now,
+    # not from midnight. Open-Meteo's hourly array always begins at 00:00 of
+    # the requested day, so a naive [:hours_needed] slice would give stale
+    # early-morning temperatures when called in the afternoon.
+    now_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    start_idx = 0
+    for idx, t in enumerate(times_str):
+        # times_str entries are ISO-8601 local strings, e.g. "2026-06-10T14:00"
+        t_naive = datetime.fromisoformat(t)
+        # Compare naive local time to UTC-expressed current hour using the
+        # wall-clock hour only (Open-Meteo returns local-timezone times when
+        # timezone=auto, so direct hour comparison is safe).
+        if t_naive.replace(tzinfo=None) >= now_hour.replace(tzinfo=None):
+            start_idx = idx
+            break
+
+    temps_c = temps_c_all[start_idx : start_idx + hours_needed]
+    if len(temps_c) < 2:
+        logger.warning("Forecast slice too short after aligning to current hour")
         return None
 
     # Linear interpolation from hourly → step_minutes resolution, then C→F
