@@ -25,6 +25,22 @@ trend that inflates all level-based correlations in a Florida climate.
 - `kitchen` has a lower within-zone correlation (~0.17–0.19 with
   neighbours), consistent with counter-heat plateau distortion.
 
+### `02_sensor_spot_checks.py`
+
+Visual spot checks for sensors flagged as potentially unreliable.
+Plots pairwise temperature comparisons over the last 10 days of
+June 2025 (reference window chosen to avoid the master bedroom
+sensor outage from the dead battery in later data).
+
+**Key findings:**
+- **master_bath vs master_bedroom**: clear shower-driven spikes
+  visible at 10-min resolution → `master_bath` dropped from model.
+- **kitchen vs dining_room**: plateau artefacts from trapped heat
+  under wall shelf above countertop → `kitchen` retained but treated
+  as lower-fidelity.
+
+Outputs: `02_master_bath_vs_bedroom.png`, `02_kitchen_vs_dining.png`
+
 ### `03_ac_duty_cycle.py`
 
 Plots the typical 24-hour duty cycle for all three AC units — average
@@ -39,14 +55,3 @@ cooling minutes per hour of day, computed over May 2025 – Jun 2026.
 Overall duty cycles: bedroom_ac ~19 min/h, living_ac ~6 min/h,
 extension_ac ~8 min/h. The bedroom AC runs more because its sensor
 (in the dining room) is exposed to heat from the open living area.
-
-Temperature comparison plots for sensors identified as potentially
-unreliable:
-
-- **master_bath vs master_bedroom**: clear shower-driven spikes
-  visible at 10-min resolution → master_bath dropped from model.
-- **kitchen vs dining_room**: plateau artefacts from trapped heat
-  under wall shelf → kitchen retained but treated as lower-fidelity.
-
-Reference window: last 10 days of June 2025 (avoids master bedroom
-sensor outage caused by dead battery in later data).

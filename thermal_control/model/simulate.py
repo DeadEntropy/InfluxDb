@@ -34,23 +34,8 @@ import yaml
 import joblib
 import numpy as np
 import pandas as pd
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-# ── Config ────────────────────────────────────────────────────────────────
-HOUSE_YAML   = "thermal_control/config/house.yaml"
-VAL_CSV      = "thermal_control/preprocess/val.csv"
-WEIGHTS_DIR  = Path("thermal_control/model/weights")
-OUTPUT_PNG   = "thermal_control/model/simulate_validation.png"
-
-# ── Load house config ─────────────────────────────────────────────────────
-with open(HOUSE_YAML) as f:
-    house = yaml.safe_load(f)
-
-SENSOR_ROOMS = {ac["id"]: ac["sensor_room"] for ac in house["ac_units"]}
-# bedroom_ac → dining_room, living_ac → kitchen, extension_ac → tv_room
 
 # ── HouseSimulator ────────────────────────────────────────────────────────
 class HouseSimulator:
@@ -123,87 +108,100 @@ class HouseSimulator:
         return states
 
 
-# ── Load validation data ──────────────────────────────────────────────────
-val = pd.read_csv(VAL_CSV, index_col="time", parse_dates=True)
-sim = HouseSimulator(WEIGHTS_DIR, house)
+if __name__ == "__main__":
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
 
-AC_IDS    = [ac["id"] for ac in house["ac_units"]]
-ROOMS     = sim.rooms
-WINDOW    = 12   # 2-hour rollout window in 10-min steps
+    # ── Config ────────────────────────────────────────────────────────────
+    HOUSE_YAML   = "thermal_control/config/house.yaml"
+    VAL_CSV      = "thermal_control/preprocess/val.csv"
+    WEIGHTS_DIR  = Path("thermal_control/model/weights")
+    OUTPUT_PNG   = "thermal_control/model/simulate_validation.png"
 
-# ── Pass 2a: one-step-ahead with simulated switching ──────────────────────
-print("── Pass 2a: one-step-ahead (simulated switching) ───────────────────")
-records = []
-for i in range(len(val) - 1):
-    row     = val.iloc[i]
-    row_next = val.iloc[i + 1]
-    state    = {r: row[f"T_{r}"] for r in ROOMS}
-    setpoints = {a: row[f"setpoint_{a}"] for a in AC_IDS}
-    T_out    = row["T_outdoor"]
-    next_state, ac_on = sim.step(state, setpoints, T_out)
-    for room_id in ROOMS:
-        records.append({
-            "room": room_id,
-            "actual": row_next[f"T_{room_id}"],
-            "pred":   next_state[room_id],
-        })
+    with open(HOUSE_YAML) as f:
+        house = yaml.safe_load(f)
 
-df_1step = pd.DataFrame(records)
-print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}")
-print("─" * 44)
-for room_id in sorted(ROOMS):
-    sub = df_1step[df_1step["room"] == room_id]
-    mae_f = (sub["actual"] - sub["pred"]).abs().mean()
-    print(f"  {room_id:<18}  {mae_f:>10.4f}  {mae_f/1.8:>10.4f}")
+    val = pd.read_csv(VAL_CSV, index_col="time", parse_dates=True)
+    sim = HouseSimulator(WEIGHTS_DIR, house)
 
-# ── Pass 2b: full 2-hour rollout windows ─────────────────────────────────
-print("\n── Pass 2b: 2-hour rollout windows (simulated switching) ───────────")
-mae_per_room = {r: [] for r in ROOMS}
+    AC_IDS    = [ac["id"] for ac in house["ac_units"]]
+    ROOMS     = sim.rooms
+    WINDOW    = 12   # 2-hour rollout window in 10-min steps
 
-for start in range(0, len(val) - WINDOW, WINDOW):
-    chunk     = val.iloc[start: start + WINDOW + 1]
-    init      = {r: chunk.iloc[0][f"T_{r}"] for r in ROOMS}
-    setpoints = [{a: chunk.iloc[t][f"setpoint_{a}"] for a in AC_IDS}
-                 for t in range(WINDOW)]
-    outdoors  = [chunk.iloc[t]["T_outdoor"] for t in range(WINDOW)]
-
-    states = sim.rollout(init, setpoints, outdoors)
-
-    for t in range(1, WINDOW + 1):
-        if start + t >= len(val):
-            break
-        actual_row = val.iloc[start + t]
+    # ── Pass 2a: one-step-ahead with simulated switching ──────────────────
+    print("── Pass 2a: one-step-ahead (simulated switching) ───────────────────")
+    records = []
+    for i in range(len(val) - 1):
+        row      = val.iloc[i]
+        row_next = val.iloc[i + 1]
+        state    = {r: row[f"T_{r}"] for r in ROOMS}
+        setpoints = {a: row[f"setpoint_{a}"] for a in AC_IDS}
+        T_out    = row["T_outdoor"]
+        next_state, ac_on = sim.step(state, setpoints, T_out)
         for room_id in ROOMS:
-            err = abs(states[t][room_id] - actual_row[f"T_{room_id}"])
-            mae_per_room[room_id].append(err)
+            records.append({
+                "room": room_id,
+                "actual": row_next[f"T_{room_id}"],
+                "pred":   next_state[room_id],
+            })
 
-print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}  {'< 1.5°C?':>10}")
-print("─" * 54)
-for room_id in sorted(ROOMS):
-    mae_f = np.mean(mae_per_room[room_id])
-    mae_c = mae_f / 1.8
-    ok    = "✓" if mae_c < 1.5 else "✗"
-    print(f"  {room_id:<18}  {mae_f:>10.4f}  {mae_c:>10.4f}  {ok:>10}")
+    df_1step = pd.DataFrame(records)
+    print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}")
+    print("─" * 44)
+    for room_id in sorted(ROOMS):
+        sub = df_1step[df_1step["room"] == room_id]
+        mae_f = (sub["actual"] - sub["pred"]).abs().mean()
+        print(f"  {room_id:<18}  {mae_f:>10.4f}  {mae_f/1.8:>10.4f}")
 
-# ── Plot: full rollout on entire validation set ───────────────────────────
-init      = {r: val.iloc[0][f"T_{r}"] for r in ROOMS}
-setpoints = [{a: val.iloc[t][f"setpoint_{a}"] for a in AC_IDS} for t in range(len(val))]
-outdoors  = [val.iloc[t]["T_outdoor"] for t in range(len(val))]
-all_states = sim.rollout(init, setpoints, outdoors)
+    # ── Pass 2b: full 2-hour rollout windows ──────────────────────────────
+    print("\n── Pass 2b: 2-hour rollout windows (simulated switching) ───────────")
+    mae_per_room = {r: [] for r in ROOMS}
 
-fig, axes = plt.subplots(len(ROOMS), 1, figsize=(14, 2.5 * len(ROOMS)), sharex=True)
-for ax, room_id in zip(axes, sorted(ROOMS)):
-    actual = val[f"T_{room_id}"].values
-    pred   = [s[room_id] for s in all_states[1:]]
-    mae_c  = np.mean(np.abs(np.array(actual) - np.array(pred))) / 1.8
-    ax.plot(val.index, actual, color="black",   linewidth=0.8, label="Actual",        alpha=0.9)
-    ax.plot(val.index, pred,   color="#DD8452", linewidth=0.8, label=f"Simulated  MAE={mae_c:.3f}°C", linestyle="--")
-    ax.set_title(room_id.replace("_", " "), fontsize=9, loc="left")
-    ax.set_ylabel("°F", fontsize=8)
-    ax.legend(fontsize=7, loc="upper right")
-    ax.grid(True, alpha=0.2)
+    for start in range(0, len(val) - WINDOW, WINDOW):
+        chunk     = val.iloc[start: start + WINDOW + 1]
+        init      = {r: chunk.iloc[0][f"T_{r}"] for r in ROOMS}
+        setpoints = [{a: chunk.iloc[t][f"setpoint_{a}"] for a in AC_IDS}
+                     for t in range(WINDOW)]
+        outdoors  = [chunk.iloc[t]["T_outdoor"] for t in range(WINDOW)]
 
-fig.suptitle("Pass 2 — full rollout on validation set (simulated AC switching)", y=1.005)
-plt.tight_layout()
-plt.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight")
-print(f"\nPlot saved → {OUTPUT_PNG}")
+        states = sim.rollout(init, setpoints, outdoors)
+
+        for t in range(1, WINDOW + 1):
+            if start + t >= len(val):
+                break
+            actual_row = val.iloc[start + t]
+            for room_id in ROOMS:
+                err = abs(states[t][room_id] - actual_row[f"T_{room_id}"])
+                mae_per_room[room_id].append(err)
+
+    print(f"{'Room':<18}  {'MAE (°F)':>10}  {'MAE (°C)':>10}  {'< 1.5°C?':>10}")
+    print("─" * 54)
+    for room_id in sorted(ROOMS):
+        mae_f = np.mean(mae_per_room[room_id])
+        mae_c = mae_f / 1.8
+        ok    = "✓" if mae_c < 1.5 else "✗"
+        print(f"  {room_id:<18}  {mae_f:>10.4f}  {mae_c:>10.4f}  {ok:>10}")
+
+    # ── Plot: full rollout on entire validation set ───────────────────────
+    init      = {r: val.iloc[0][f"T_{r}"] for r in ROOMS}
+    setpoints = [{a: val.iloc[t][f"setpoint_{a}"] for a in AC_IDS} for t in range(len(val))]
+    outdoors  = [val.iloc[t]["T_outdoor"] for t in range(len(val))]
+    all_states = sim.rollout(init, setpoints, outdoors)
+
+    fig, axes = plt.subplots(len(ROOMS), 1, figsize=(14, 2.5 * len(ROOMS)), sharex=True)
+    for ax, room_id in zip(axes, sorted(ROOMS)):
+        actual = val[f"T_{room_id}"].values
+        pred   = [s[room_id] for s in all_states[1:]]
+        mae_c  = np.mean(np.abs(np.array(actual) - np.array(pred))) / 1.8
+        ax.plot(val.index, actual, color="black",   linewidth=0.8, label="Actual",        alpha=0.9)
+        ax.plot(val.index, pred,   color="#DD8452", linewidth=0.8, label=f"Simulated  MAE={mae_c:.3f}°C", linestyle="--")
+        ax.set_title(room_id.replace("_", " "), fontsize=9, loc="left")
+        ax.set_ylabel("°F", fontsize=8)
+        ax.legend(fontsize=7, loc="upper right")
+        ax.grid(True, alpha=0.2)
+
+    fig.suptitle("Pass 2 — full rollout on validation set (simulated AC switching)", y=1.005)
+    plt.tight_layout()
+    plt.savefig(OUTPUT_PNG, dpi=150, bbox_inches="tight")
+    print(f"\nPlot saved → {OUTPUT_PNG}")

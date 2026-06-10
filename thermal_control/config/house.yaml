@@ -110,7 +110,8 @@ ac_units:
   #     by dining_room temperature, itself influenced by living_ac.
   - id: bedroom_ac
     ha_entity_id: bedroom_thermostat
-    climate_entity: climate.bedroom_thermostat        # TODO: confirm HA climate entity
+    climate_entity: climate.bedroom_thermostat
+    ac_sensor_entity: sensor.bedroom_thermostat_air_temperature
     sensor_room: dining_room
     covers:
       - master_bedroom
@@ -123,7 +124,8 @@ ac_units:
   # ── Living AC ─────────────────────────────────────────────────────────────
   - id: living_ac
     ha_entity_id: thermostat_central
-    climate_entity: climate.thermostat_central        # TODO: confirm HA climate entity
+    climate_entity: climate.thermostat_central
+    ac_sensor_entity: sensor.thermostat_central_air_temperature_2
     sensor_room: kitchen
     covers:
       - dining_room
@@ -134,14 +136,15 @@ ac_units:
   # ── Extension AC ──────────────────────────────────────────────────────────
   - id: extension_ac
     ha_entity_id: thermostat_extension
-    climate_entity: climate.thermostat_extension      # TODO: confirm HA climate entity
+    climate_entity: climate.thermostat_extension
+    ac_sensor_entity: sensor.thermostat_extension_air_temperature_2
     sensor_room: tv_room
     covers:
       - tv_room
       - nicolas_office
       # nicolas_bath excluded (no sensor)
 
-outdoor_sensor: sensor.outdoor_temperature            # TODO: confirm HA entity name
+outdoor_sensor: sensor.pool_temperature
 # Outdoor temperature is measured by the pool sensor mounted under the
 # house soffit. CSV column: "Pool Temp". Used as T_outdoor in the DAG.
 outdoor_csv_column: "Pool Temp"

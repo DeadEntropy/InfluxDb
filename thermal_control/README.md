@@ -41,10 +41,12 @@ the physical controller sensor locations entirely.
 ```
 Every 10 minutes:
   1. Read all room temperatures from independent Zigbee sensors
-  2. Evaluate all 2³ = 8 AC on/off combinations using the thermal model
+  2. Resolve the active schedule entry → per-room comfort bands
+     (e.g. offices get a wide band at night so the MPC ignores them)
+  3. Evaluate all 2³ = 8 AC on/off combinations using the thermal model
      (predict what each room will be in 3 hours under each combination)
-  3. Pick the combination that minimises total discomfort + energy use
-  4. Write setpoints to AC controllers:
+  4. Pick the combination that minimises total discomfort + energy use
+  5. Write setpoints to AC controllers:
        ON  → setpoint = 65°F  (always below indoor temp → AC always runs)
        OFF → setpoint = 84°F  (always above indoor temp → AC never runs)
 ```
@@ -64,7 +66,7 @@ indirect effects that propagate through adjacent rooms.
 | `preprocess/` | Data cleaning and feature engineering pipeline |
 | `model/` | Ridge regression fitting and forward simulator |
 | `control/` | Bang-bang MPC optimiser |
-| `ha_bridge/` | Home Assistant REST API integration *(pending)* |
+| `ha_bridge/` | Home Assistant REST API integration (read sensors, write setpoints) |
 
 ---
 
@@ -83,7 +85,7 @@ python model/simulate.py               # validate: Pass 1 + Pass 2
 
 # Operation (runs continuously)
 python scheduler.py                     # main 10-min control loop
-python recalibrate.py                   # monthly model refit (cron job)
+# python recalibrate.py                 # monthly model refit (not yet written)
 ```
 
 ---

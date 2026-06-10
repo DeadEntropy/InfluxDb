@@ -43,11 +43,43 @@ using observed AC on/off states.
 
 All rooms pass the < 1.0°C target by a wide margin.
 
-### `simulate.py` *(not yet created)*
+### `simulate.py`
 
-Forward simulator: steps the full house state through time using the
-fitted room models (Layer 3) and the AC switching logic (Layer 2).
-Used for Pass 2 validation and as the forward model inside the MPC.
+`HouseSimulator` class. Core methods:
+
+- `step(state, setpoints, T_outdoor)` — advances all rooms one 10-min
+  timestep. Derives `AC_on` from controller sensor temps vs setpoints
+  (Layer 2), then runs each room model (Layer 3).
+- `rollout(initial_state, setpoint_schedule, outdoor_series)` — chains
+  `step` calls for multi-step forward simulation.
+
+The `__main__` block runs Pass 2 validation on `preprocess/val.csv`:
+
+- **Pass 2a — one-step-ahead**: resets room temps to observed each step
+  but derives AC_on from simulated switching. Isolates switching error.
+- **Pass 2b — 2-hour rollout windows**: accumulates state over 12-step
+  windows, averages MAE. Target < 1.5°C. All rooms pass.
+
+Outputs: `thermal_control/model/simulate_validation.png`
+
+### `compare_formulations.py`
+
+Fits and compares two model formulations for each room:
+
+- **Model A** — absolute temperatures (current production approach):
+  features are `T_X_lag1`, neighbour `T_Y_lag1`, `ac_on_j`,
+  `T_outdoor_lag1`.
+- **Model B** — temperature differences (Newton's law of cooling):
+  features are `T_X_lag1`, `dT_outdoor`, `dT_neighbour`, `ac_on_j`.
+  Coefficients have direct physical meaning (thermal conductance,
+  cooling power per step).
+
+Both formulations give identical MAE in practice — the linear feature
+spaces are equivalent. Model A is kept for production; Model B weights
+are saved to `weights_diff/` for reference.
+
+Outputs: `thermal_control/model/compare_formulations.png`,
+`thermal_control/model/weights_diff/`
 
 ## weights/
 

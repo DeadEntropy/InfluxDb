@@ -12,11 +12,16 @@ mpc:
   # fewer ACs running when multiple combinations achieve equal comfort
   energy_weight: 0.05
 
+  # Set true to fetch a 3-hour outdoor temperature forecast from Open-Meteo
+  # and feed it into the MPC horizon instead of repeating the current reading.
+  # Set false to use the current observed outdoor temperature as a constant.
+  use_forecast: false
+
 targets:
   # Comfort band in °F — penalty applied outside this range
   default:
-    min_f: 72
-    max_f: 76
+    min_f: 75
+    max_f: 77
 
   # Per-room overrides (optional)
   # nicolas_office:

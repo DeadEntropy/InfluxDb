@@ -42,11 +42,19 @@ it only matters as a pass-through for the switching hardware.
 
 ### `mpc.py`
 
-`BangBangMPC` class. Core method: `solve(current_state, current_outdoor)`.
+`BangBangMPC` class. Core method: `solve(current_state, outdoor_series)`.
 
-- `current_state`   : `{room_id: temp_F}` from independent room sensors
-- `current_outdoor` : current outdoor temperature (°F)
-- Returns           : `{ac_id: setpoint_F}` — 65°F (ON) or 84°F (OFF)
+- `current_state`  : `{room_id: temp_F}` from independent room sensors
+- `outdoor_series` : `list[float]` (°F), one value per horizon step —
+  either a real forecast from `forecast.py` or `[current_outdoor] * horizon`
+- Returns          : `{ac_id: setpoint_F}` — 65°F (ON) or 84°F (OFF)
+
+Before each `solve()` call the scheduler resolves the active schedule
+entry from `control.yaml` and updates `mpc.targets` accordingly. Rooms
+marked inactive in the current schedule window carry a wide comfort band
+(65–85°F), making their discomfort cost effectively zero so the MPC will
+not run an AC unit purely to service them. The MPC itself is stateless
+with respect to the schedule — it only sees the resolved target dict.
 
 **Objective function:**
 ```
@@ -58,14 +66,24 @@ cost = Σ_t Σ_rooms  max(0, T − T_max)²   (too hot penalty)
 The energy penalty is small (weight 0.05) and only breaks ties —
 comfort always dominates.
 
-**`explain()`** prints a ranked table of all 8 combinations with
-their costs, useful for debugging and manual inspection.
+**`explain()`** prints three sections after `solve()`:
 
-### `forecast.py` *(not yet created)*
+1. **Comfort diagnosis** — each room's current temperature vs its target
+   band, highlighting which rooms are too hot or too cold.
+2. **All 8 combinations ranked by cost** — shows setpoints and total
+   cost for every combo, with the chosen one marked.
+3. **Projected outcome** — for the chosen combo, each room's current
+   temperature, predicted temperature at end of horizon, trend
+   direction, and whether it lands inside the comfort band.
 
-Will fetch outdoor temperature forecast from Open-Meteo API for use
-as the outdoor input during the horizon rollout. Currently the MPC
-uses the current observed outdoor temperature as a constant.
+### `forecast.py`
+
+Fetches the outdoor temperature forecast from Open-Meteo (free, no API
+key). Interpolates hourly values to 10-minute resolution and converts
+Celsius to °F. Returns a list of length `horizon_steps`, or `None` on
+any network or parse failure (callers fall back to constant temp).
+
+Enabled by `use_forecast: true` in `config/control.yaml`.
 
 ## Configuration
 
@@ -75,3 +93,4 @@ See `config/control.yaml`:
 - `horizon_steps`  : 18 (3 hours at 10-min resolution)
 - `targets`        : per-room comfort bands in °F
 - `energy_weight`  : 0.05 (small, only breaks ties)
+- `use_forecast`   : false — set true to use Open-Meteo forecast over the horizon

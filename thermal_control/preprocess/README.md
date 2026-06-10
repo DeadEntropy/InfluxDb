@@ -53,11 +53,20 @@ transitions. Option 3 would require changes to `model/simulate.py`.
 
 Output: `ac_states_clean.csv`.
 
-### `04_merge.py` *(not yet created)*
+### `04_merge.py`
 
 Merges `room_temps_clean.csv` and `ac_states_clean.csv` on the shared
-10-minute index, creates lagged features, and produces the final
-training DataFrame used by `model/fit.py`.
+10-minute index, creates lagged features, and splits into train/val sets.
+
+Lag propagation: if row t−1 was NaN (filtered as sentinel or stale),
+the lag feature at row t is also NaN and the row is dropped — prevents
+the model learning across data gaps.
+
+Hour-of-day features (`hour_sin`/`hour_cos`) are intentionally excluded:
+outdoor temperature already captures the daily thermal cycle.
+
+Outputs `train.csv` (everything before the last 2 weeks) and `val.csv`
+(last 2 weeks, held out).
 
 ## Output files
 
@@ -65,4 +74,5 @@ training DataFrame used by `model/fit.py`.
 |------|-------------|
 | `room_temps_clean.csv` | Filtered room temperatures, 10-min grid |
 | `ac_states_clean.csv` | Resampled AC setpoints, sensor temps, on/off |
-| `merged_features.csv` | *(pending)* Final training DataFrame |
+| `train.csv` | Merged feature DataFrame, all rows before last 2 weeks |
+| `val.csv` | Merged feature DataFrame, last 2 weeks (held out) |
