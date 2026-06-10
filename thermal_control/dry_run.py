@@ -21,7 +21,7 @@ load_dotenv(ROOT / ".env")
 import yaml
 from thermal_control.model.simulate   import HouseSimulator
 from thermal_control.control.mpc      import BangBangMPC
-from thermal_control.control.forecast import get_forecast_f
+from thermal_control.control.forecast import build_outdoor_series
 from thermal_control.ha_bridge        import controller as ha
 
 FALLBACK_TEMP_F = 74.0
@@ -41,7 +41,7 @@ for r, t in sorted(room_temps.items()):
     print(f"  {r:<26} {t:.2f}°F")
 
 outdoor = ha.get_outdoor_temp(house)
-print(f"Outdoor: {outdoor}°F" if outdoor else "Outdoor: unavailable (using fallback)")
+print(f"Outdoor: {outdoor}°F" if outdoor is not None else "Outdoor: unavailable (using fallback)")
 
 ac_states = ha.get_ac_states(house)
 print("\nAC states:")
@@ -65,23 +65,9 @@ for room_id in sim.rooms:
         print(f"  {room_id:<26}  {FALLBACK_TEMP_F:>6.1f}°F  {target_str:>12}  fallback")
 
 # ── Build outdoor series for MPC horizon ─────────────────────────────────
-T_out   = outdoor if outdoor is not None else FALLBACK_TEMP_F
-horizon = control["mpc"]["horizon_steps"]
-
-if control["mpc"].get("use_forecast"):
-    forecast = get_forecast_f(
-        house["location"]["lat"],
-        house["location"]["lon"],
-        horizon,
-    )
-    if forecast is not None:
-        outdoor_series = forecast
-        print(f"Forecast: {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon")
-    else:
-        outdoor_series = [T_out] * horizon
-        print("Forecast unavailable, using constant outdoor temp")
-else:
-    outdoor_series = [T_out] * horizon
+T_out = outdoor if outdoor is not None else FALLBACK_TEMP_F
+outdoor_series, outdoor_desc = build_outdoor_series(T_out, house, control)
+print(f"Outdoor series: {outdoor_desc}")
 
 # ── Solve MPC (no writes) ─────────────────────────────────────────────────
 setpoints = mpc.solve(state, outdoor_series)
@@ -91,4 +77,4 @@ for ac_id, sp in setpoints.items():
     label = "ON" if sp == control["mpc"]["setpoint_on_f"] else "OFF"
     print(f"  {ac_id:<15}  {sp}°F  ({label})")
 
-mpc.explain()
+print(mpc.explain())

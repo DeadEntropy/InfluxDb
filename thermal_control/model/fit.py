@@ -52,7 +52,7 @@ with open(HOUSE_YAML) as f:
 # Build adjacency map  {room_id: [neighbor_ids]}  (only rooms with sensors)
 has_sensor = {
     r["id"] for r in house["rooms"]
-    if r.get("sensor_entity") and r["sensor_entity"] != "null" and r.get("csv_column")
+    if r.get("sensor_entity") and r.get("csv_column")
 }
 
 adjacency = {}

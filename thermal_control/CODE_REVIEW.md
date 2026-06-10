@@ -357,31 +357,45 @@ explicit).
 
 ## P3 — Minor / cosmetic
 
-### 19. Assorted small items
-- [ ] `scheduler.py:74,131` — `datetime.utcnow()` is deprecated (3.12+); use
-  `datetime.now(timezone.utc)`. Also `fill_missing` uses UTC while tick logs use
-  local `datetime.now()` — pick one.
-- [ ] `control/mpc.py:194` — `explain()` hard-codes 10 min/step instead of
-  `tick_minutes` from config.
-- [ ] `control/mpc.py:77-81` — all rooms without an override share the *same*
-  `default` dict object; mutating one room's targets later (e.g. for the
-  schedule feature) would mutate all. Copy per room.
-- [ ] `dry_run.py:44` — `print(... if outdoor else ...)` treats a legitimate
-  0.0°F as "unavailable" (harmless in FL; still wrong; use `is not None`).
-- [ ] `model/fit.py:54` — `r["sensor_entity"] != "null"`: YAML `null` loads as
-  Python `None`, never the string `"null"`; the truthiness check already covers
-  it. Delete the string comparison.
-- [ ] `preprocess/03_ac_states.py:98-106` — two unbounded `ffill`s: a multi-day
-  HA outage would be silently filled with frozen AC states (the room-temp side
-  gets stale-filtered, the AC side doesn't). Consider `ffill(limit=…)` (a few
-  hours) so long outages become NaN and get dropped in the merge.
-- [ ] `ha_bridge/controller.py:54` — `float(val)` assumes the sensor reports °F.
-  True today; one startup check of `unit_of_measurement == "°F"` would catch a
-  future HA unit-system change cheaply.
-- [ ] Weights portability — record the sklearn version in `metrics.json` at fit
-  time (`.joblib` files are version-sensitive).
-- [ ] `dry_run.py` duplicates the fallback/forecast logic of `scheduler.py` —
-  extract a shared helper so the dry run exercises the production code path.
+### 19. Assorted small items — **All fixed 2026-06-10**
+
+- [x] `scheduler.py` — `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`
+  in both `fill_missing()` and the outdoor-cache update. The sentinel `datetime.min`
+  is now `datetime.min.replace(tzinfo=timezone.utc)` so comparisons remain consistent.
+  Timestamps throughout are now uniformly UTC.
+
+- [x] `control/mpc.py:194` — hardcoded `10 min/step` already fixed as part of
+  issue 11 (now uses `self.tick_minutes` from config).
+
+- [x] `control/mpc.py:77-81` — `dict(overrides.get(room, default))` now copies
+  the default dict for each room instead of sharing the same object, so per-room
+  target mutations (e.g. from the schedule feature) cannot bleed across rooms.
+
+- [x] `dry_run.py:44` — `if outdoor else` → `if outdoor is not None`. Treats
+  a legitimate 0.0°F reading correctly.
+
+- [x] `model/fit.py:54` — deleted `r["sensor_entity"] != "null"`. YAML `null`
+  loads as Python `None`; the preceding `r.get("sensor_entity")` truthiness check
+  already handles it.
+
+- [x] `preprocess/03_ac_states.py:98-106` — both `ffill()` calls at the merge
+  and reindex steps are now `ffill(limit=18)` (3 hours at 10-min resolution).
+  A longer HA outage becomes NaN and is dropped in `04_merge.py` rather than
+  silently propagating frozen AC states.
+
+- [x] `ha_bridge/controller.py` — new `check_sensor_units(house_config)` function
+  reads `unit_of_measurement` from each room sensor's attributes at startup and
+  logs `WARNING` for anything that isn't `"°F"`. Called once from `run()` before
+  the main loop.
+
+- [x] Weights portability — sklearn version already recorded in `metrics.json`
+  as part of issue 9 fix.
+
+- [x] `dry_run.py` — now imports and uses `build_outdoor_series()` from
+  `control/forecast.py` instead of duplicating the fallback/forecast logic.
+  `mpc.explain()` now correctly calls `print(mpc.explain())` since `explain()`
+  returns a string (fixed as part of issue 11). `build_outdoor_series()` is the
+  single source of truth exercised by both the live scheduler and the dry run.
 
 ---
 

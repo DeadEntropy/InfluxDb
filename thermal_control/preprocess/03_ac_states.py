@@ -96,14 +96,16 @@ for entity_id, ac_id in AC_ENTITY_MAP.items():
 
 # ── Merge & align ─────────────────────────────────────────────────────────
 result = frames[0].join(frames[1], how="outer").join(frames[2], how="outer")
-result = result.ffill()
+# limit=18 caps the fill at 3 hours (18 × 10-min steps); a longer HA outage
+# becomes NaN and gets dropped in 04_merge.py rather than being silently filled.
+result = result.ffill(limit=18)
 
 # Align to the same index as room_temps_clean.csv
 room_index = pd.read_csv(
     "thermal_control/preprocess/room_temps_clean.csv",
     index_col="time", parse_dates=True
 ).index
-result = result.reindex(room_index, method="ffill")
+result = result.reindex(room_index).ffill(limit=18)
 
 print(f"Final shape: {result.shape}")
 print(f"NaN per column:\n{result.isna().sum().to_string()}")

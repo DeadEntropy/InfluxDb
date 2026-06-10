@@ -80,3 +80,35 @@ def get_forecast_f(lat, lon, n_steps, step_minutes=10):
     x_steps  = np.arange(n_steps) * step_minutes
     interp_c = np.interp(x_steps, x_hourly, temps_c)
     return [c * 9 / 5 + 32 for c in interp_c]
+
+
+def build_outdoor_series(outdoor_f, house_config, control_config):
+    """
+    Build the outdoor temperature series for the MPC horizon.
+
+    Uses the Open-Meteo forecast when use_forecast is true; falls back to
+    repeating the current observed value. Returns (series, description) so
+    callers can log the source without duplicating the fallback logic.
+
+    outdoor_f      : current outdoor temperature in °F (fallback value)
+    house_config   : loaded house.yaml dict
+    control_config : loaded control.yaml dict
+    """
+    horizon      = control_config["mpc"]["horizon_steps"]
+    step_minutes = control_config["mpc"]["tick_minutes"]
+
+    if control_config["mpc"].get("use_forecast"):
+        forecast = get_forecast_f(
+            house_config["location"]["lat"],
+            house_config["location"]["lon"],
+            horizon,
+            step_minutes,
+        )
+        if forecast is not None:
+            desc = f"forecast {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon"
+            return forecast, desc
+        desc = f"constant {outdoor_f:.1f}°F (forecast fetch failed)"
+        return [outdoor_f] * horizon, desc
+
+    desc = f"constant {outdoor_f:.1f}°F (forecast disabled)"
+    return [outdoor_f] * horizon, desc

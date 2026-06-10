@@ -25,7 +25,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
@@ -42,7 +42,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from thermal_control.model.simulate  import HouseSimulator
 from thermal_control.control.mpc     import BangBangMPC
-from thermal_control.control.forecast import get_forecast_f
+from thermal_control.control.forecast import build_outdoor_series
 from thermal_control.ha_bridge       import controller as ha
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
     or fallback_f. Updates cache with fresh readings.
     Returns complete {room_id: temp_F} for all modelled rooms.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(minutes=STALE_LIMIT_MINUTES)
 
     for room_id, temp in current_temps.items():
@@ -138,12 +138,13 @@ def run():
 
     tick_seconds = control["mpc"]["tick_minutes"] * 60
     sensor_cache = {}   # {room_id: (temp_F, datetime)}
-    outdoor_cache = (FALLBACK_TEMP_F, datetime.min)
+    outdoor_cache = (FALLBACK_TEMP_F, datetime.min.replace(tzinfo=timezone.utc))
 
     # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
     # except-Exception block and hits the outer finally → safe setpoints written.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
+    ha.check_sensor_units(house)
     logger.info("Thermal MPC scheduler started")
     logger.info(f"Tick interval : {control['mpc']['tick_minutes']} min")
     logger.info(f"Horizon       : {control['mpc']['horizon_steps']} steps "
@@ -176,28 +177,17 @@ def run():
                 # 3. Outdoor temperature
                 outdoor = ha.get_outdoor_temp(house)
                 if outdoor is not None:
-                    outdoor_cache = (outdoor, datetime.utcnow())
+                    outdoor_cache = (outdoor, datetime.now(timezone.utc))
                     logger.info(f"Outdoor: {outdoor:.1f}°F")
                 else:
                     outdoor, _ = outdoor_cache
                     logger.warning(f"Outdoor sensor unavailable, using cached {outdoor:.1f}°F")
 
                 # 5. Build outdoor series for MPC horizon
-                horizon = control["mpc"]["horizon_steps"]
-                if control["mpc"].get("use_forecast"):
-                    forecast = get_forecast_f(
-                        house["location"]["lat"],
-                        house["location"]["lon"],
-                        horizon,
-                    )
-                    if forecast is not None:
-                        outdoor_series = forecast
-                        logger.info(f"Forecast: {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon")
-                    else:
-                        outdoor_series = [outdoor] * horizon
-                        logger.warning("Forecast unavailable, using constant outdoor temp")
-                else:
-                    outdoor_series = [outdoor] * horizon
+                outdoor_series, outdoor_desc = build_outdoor_series(
+                    outdoor, house, control
+                )
+                logger.info(f"Outdoor series: {outdoor_desc}")
 
                 # 6. Solve MPC
                 setpoints = mpc.solve(state, outdoor_series)

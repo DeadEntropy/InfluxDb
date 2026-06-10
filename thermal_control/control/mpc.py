@@ -80,7 +80,7 @@ class BangBangMPC:
         overrides         = {k: v for k, v in control_config["targets"].items()
                              if k != "default"}
         self.targets      = {
-            room: overrides.get(room, default)
+            room: dict(overrides.get(room, default))
             for room in self.rooms
         }
 

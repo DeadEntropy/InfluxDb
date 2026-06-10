@@ -34,6 +34,30 @@ def _get_state(entity_id):
     return r.json()
 
 
+# ── Startup checks ────────────────────────────────────────────────────────
+
+def check_sensor_units(house_config):
+    """
+    Called once at scheduler startup. Verifies every room sensor reports in °F
+    so a future HA unit-system change (metric switch, sensor replacement) is
+    caught immediately rather than silently producing wrong temperatures.
+    """
+    for room in house_config["rooms"]:
+        entity = room.get("sensor_entity")
+        if not entity:
+            continue
+        try:
+            s   = _get_state(entity)
+            uom = s.get("attributes", {}).get("unit_of_measurement")
+            if uom != "°F":
+                logger.warning(
+                    f"Unexpected unit_of_measurement for {entity}: "
+                    f"'{uom}' (expected '°F') — readings may be wrong"
+                )
+        except Exception as exc:
+            logger.warning(f"Could not check units for {entity}: {exc}")
+
+
 # ── Reads ─────────────────────────────────────────────────────────────────
 
 def get_room_temps(house_config):
