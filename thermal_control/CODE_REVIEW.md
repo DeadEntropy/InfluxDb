@@ -14,22 +14,26 @@ a few items depend on your answers.
 ## P0 — Safety & correctness (fix before running unattended)
 
 ### 1. No failsafe if the scheduler dies while ACs are forced ON
-- [ ] `scheduler.py`
+- [x] `scheduler.py` — **Partially fixed 2026-06-10** (in-process exit paths)
 
 If the process crashes, is killed, or the machine reboots after a tick wrote
 `65°F` setpoints, the ACs stay forced ON indefinitely — cooling toward 65°F with
 nothing to stop them. The physical control loop you deliberately bypassed is no
 longer there to save you.
 
-**Proposed fix (both layers):**
-1. In `scheduler.py`, wrap the main loop in `try/finally` (and handle `SIGTERM`/
-   `SIGINT`) to write a safe neutral setpoint (e.g. 76°F) to all three units on
-   any exit path.
-2. Add a watchdog on the HA side that doesn't depend on this process: the
-   scheduler publishes a heartbeat (e.g. updates an `input_datetime` helper each
-   tick), and an HA automation resets all climate entities to 76°F if the
-   heartbeat is older than ~30 min. This covers power loss / network partition,
-   which `finally` cannot.
+**Fix applied (layer 1 — in-process):**
+- `_write_safe_setpoints()` writes 76°F to all AC units. 76°F hands control back
+  to each thermostat's own sensor — neither forcing ON nor forcing OFF.
+- SIGTERM registered via `signal.signal` to raise `SystemExit`, which escapes
+  the inner `except Exception` tick handler.
+- `while True` wrapped in `try / except (KeyboardInterrupt, SystemExit) / finally`
+  — the `finally` calls `_write_safe_setpoints()` on every exit path: Ctrl-C,
+  `systemctl stop`, unhandled exception escaping the tick.
+
+**Still needed (layer 2 — HA watchdog):**
+Add an HA automation that resets all climate entities to 76°F if a heartbeat
+`input_datetime` helper (updated each tick) is older than ~30 min. This covers
+power loss and kernel OOM kill, which `finally` cannot handle.
 
 ### 2. Constant-action horizon causes overshoot bias and possible chattering
 - [ ] `control/mpc.py:120-131`

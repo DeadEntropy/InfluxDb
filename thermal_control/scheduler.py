@@ -21,6 +21,7 @@ Run from the repo root:
 
 import logging
 import os
+import signal
 import sys
 import time
 from datetime import datetime, timedelta
@@ -55,6 +56,22 @@ logger = logging.getLogger(__name__)
 
 STALE_LIMIT_MINUTES = 30   # drop cached reading after this long
 FALLBACK_TEMP_F     = 74.0 # used when a room has no reading at all
+SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
+
+
+def _write_safe_setpoints(house):
+    """
+    Write a neutral setpoint to every AC unit on any exit path.
+    76°F hands control back to each thermostat's own sensor — neither
+    forcing the AC on nor forcing it off. Called from the finally block
+    so it runs on KeyboardInterrupt, SIGTERM, and unhandled exceptions.
+    """
+    safe = {ac["id"]: SAFE_SETPOINT_F for ac in house["ac_units"]}
+    try:
+        ha.apply_setpoints(safe, house)
+        logger.info(f"Safe setpoints written ({SAFE_SETPOINT_F}°F) — exiting")
+    except Exception as exc:
+        logger.error(f"Failed to write safe setpoints on exit: {exc}")
 
 
 def load_configs():
@@ -106,67 +123,77 @@ def run():
     sensor_cache = {}   # {room_id: (temp_F, datetime)}
     outdoor_cache = (FALLBACK_TEMP_F, datetime.min)
 
+    # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
+    # except-Exception block and hits the outer finally → safe setpoints written.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
     logger.info("Thermal MPC scheduler started")
     logger.info(f"Tick interval : {control['mpc']['tick_minutes']} min")
     logger.info(f"Horizon       : {control['mpc']['horizon_steps']} steps "
                 f"({control['mpc']['horizon_steps'] * control['mpc']['tick_minutes']} min)")
     logger.info(f"Rooms         : {sim.rooms}")
 
-    while True:
-        tick_start = time.monotonic()
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logger.info(f"── Tick {now} ─────────────────────────")
+    try:
+        while True:
+            tick_start = time.monotonic()
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info(f"── Tick {now} ─────────────────────────")
 
-        try:
-            # 1. Read room temperatures
-            current_temps = ha.get_room_temps(house)
-            logger.info(f"Live sensors ({len(current_temps)}/{len(sim.rooms)}): "
-                        + ", ".join(f"{r}={t:.1f}°F" for r, t in sorted(current_temps.items())))
+            try:
+                # 1. Read room temperatures
+                current_temps = ha.get_room_temps(house)
+                logger.info(f"Live sensors ({len(current_temps)}/{len(sim.rooms)}): "
+                            + ", ".join(f"{r}={t:.1f}°F" for r, t in sorted(current_temps.items())))
 
-            state = fill_missing(current_temps, sensor_cache, sim.rooms, FALLBACK_TEMP_F)
+                state = fill_missing(current_temps, sensor_cache, sim.rooms, FALLBACK_TEMP_F)
 
-            # 2. Outdoor temperature
-            outdoor = ha.get_outdoor_temp(house)
-            if outdoor is not None:
-                outdoor_cache = (outdoor, datetime.utcnow())
-                logger.info(f"Outdoor: {outdoor:.1f}°F")
-            else:
-                outdoor, _ = outdoor_cache
-                logger.warning(f"Outdoor sensor unavailable, using cached {outdoor:.1f}°F")
+                # 2. Outdoor temperature
+                outdoor = ha.get_outdoor_temp(house)
+                if outdoor is not None:
+                    outdoor_cache = (outdoor, datetime.utcnow())
+                    logger.info(f"Outdoor: {outdoor:.1f}°F")
+                else:
+                    outdoor, _ = outdoor_cache
+                    logger.warning(f"Outdoor sensor unavailable, using cached {outdoor:.1f}°F")
 
-            # 3. Build outdoor series for MPC horizon
-            horizon = control["mpc"]["horizon_steps"]
-            if control["mpc"].get("use_forecast"):
-                forecast = get_forecast_f(
-                    house["location"]["lat"],
-                    house["location"]["lon"],
-                    horizon,
-                )
-                if forecast is not None:
-                    outdoor_series = forecast
-                    logger.info(f"Forecast: {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon")
+                # 3. Build outdoor series for MPC horizon
+                horizon = control["mpc"]["horizon_steps"]
+                if control["mpc"].get("use_forecast"):
+                    forecast = get_forecast_f(
+                        house["location"]["lat"],
+                        house["location"]["lon"],
+                        horizon,
+                    )
+                    if forecast is not None:
+                        outdoor_series = forecast
+                        logger.info(f"Forecast: {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon")
+                    else:
+                        outdoor_series = [outdoor] * horizon
+                        logger.warning("Forecast unavailable, using constant outdoor temp")
                 else:
                     outdoor_series = [outdoor] * horizon
-                    logger.warning("Forecast unavailable, using constant outdoor temp")
-            else:
-                outdoor_series = [outdoor] * horizon
 
-            # 4. Solve MPC
-            setpoints = mpc.solve(state, outdoor_series)
-            mpc.explain()
+                # 4. Solve MPC
+                setpoints = mpc.solve(state, outdoor_series)
+                mpc.explain()
 
-            # 5. Apply setpoints
-            logger.info("Applying setpoints:")
-            ha.apply_setpoints(setpoints, house)
+                # 5. Apply setpoints
+                logger.info("Applying setpoints:")
+                ha.apply_setpoints(setpoints, house)
 
-        except Exception as exc:
-            logger.error(f"Tick failed: {exc}", exc_info=True)
+            except Exception as exc:
+                logger.error(f"Tick failed: {exc}", exc_info=True)
 
-        # Sleep for the remainder of the tick interval
-        elapsed = time.monotonic() - tick_start
-        sleep_s = max(0, tick_seconds - elapsed)
-        logger.info(f"Tick done in {elapsed:.1f}s, sleeping {sleep_s:.0f}s")
-        time.sleep(sleep_s)
+            # Sleep for the remainder of the tick interval
+            elapsed = time.monotonic() - tick_start
+            sleep_s = max(0, tick_seconds - elapsed)
+            logger.info(f"Tick done in {elapsed:.1f}s, sleeping {sleep_s:.0f}s")
+            time.sleep(sleep_s)
+
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutdown signal received")
+    finally:
+        _write_safe_setpoints(house)
 
 
 if __name__ == "__main__":
