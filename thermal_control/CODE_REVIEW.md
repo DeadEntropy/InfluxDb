@@ -233,16 +233,35 @@ says should be ignored at night.
    would be silently swallowed into it. Filter to known room ids.
 
 ### 11. No persistent record of MPC decisions
-- [ ] `scheduler.py`, `control/mpc.py:145+`
+- [x] `scheduler.py`, `control/mpc.py` — **Fixed 2026-06-10**
 
-`explain()` uses `print()` (bypassing logging — interleaves oddly with log
-output), and nothing is written to disk. Step 10 of your own implementation plan
-("monitor for 1 week, tune `energy_weight`") is impossible without history.
+`explain()` used `print()` (bypassing logging), and nothing was written to disk,
+making step 10 ("monitor for 1 week, tune `energy_weight`") impossible.
 
-**Proposed fix:** each tick, append one structured row — timestamp, all room
-temps, outdoor, chosen combo, costs of all 8 combos, applied setpoints, any
-write failures — to a CSV (or InfluxDB, which you already run). Convert
-`explain()` to return a string and log it.
+**Fix applied:**
+
+- `explain()` now builds and **returns a string** instead of printing. The
+  scheduler logs it via `logger.info(mpc.explain())`, keeping it in the same
+  stream as all other tick output. Also fixed the hardcoded `10 min/step` — now
+  uses `self.tick_minutes` from config (also resolves the issue 19 item).
+
+- New `decision_record()` method on `BangBangMPC` returns a flat dict with every
+  field needed for analysis: `T_<room>`, `on_<ac>`, `sp_<ac>`, `cost_chosen`,
+  `cost_<3-bit-combo>` for all 8 combinations, `proj_<room>` at horizon end.
+
+- `_append_decision_log(record)` in `scheduler.py` appends one CSV row per tick
+  to `thermal_control/logs/decisions.csv`, creating the file and header on first
+  run. Write failures in the log helper are caught and logged as `WARNING` so
+  they never crash the control loop.
+
+- The setpoint apply step is now wrapped in its own try/except so a write failure
+  sets `write_ok=False` in the record but still produces a log row. Previously a
+  write failure would skip the log entirely.
+
+**CSV columns per row:** `timestamp`, `T_outdoor`, `write_ok`, then all
+`decision_record()` fields — 8 room temps, 3 on/off flags, 3 setpoints,
+`cost_chosen`, 8 combo costs, 8 projected room temps. Sufficient to plot duty
+cycles, replay decisions offline, and tune `energy_weight`.
 
 ### 12. Energy term doesn't scale with the horizon
 - [ ] `control/mpc.py:102-106`

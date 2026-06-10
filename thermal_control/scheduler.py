@@ -19,6 +19,7 @@ Run from the repo root:
     python thermal_control/scheduler.py
 """
 
+import csv
 import logging
 import os
 import signal
@@ -58,6 +59,8 @@ STALE_LIMIT_MINUTES = 30   # drop cached reading after this long
 FALLBACK_TEMP_F     = 74.0 # used when a room has no reading at all
 SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 
+DECISION_LOG = ROOT / "logs" / "decisions.csv"
+
 
 def _write_safe_setpoints(house):
     """
@@ -72,6 +75,20 @@ def _write_safe_setpoints(house):
         logger.info(f"Safe setpoints written ({SAFE_SETPOINT_F}°F) — exiting")
     except Exception as exc:
         logger.error(f"Failed to write safe setpoints on exit: {exc}")
+
+
+def _append_decision_log(record):
+    """Append one row to the CSV decision log, creating the file if needed."""
+    try:
+        DECISION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not DECISION_LOG.exists()
+        with open(DECISION_LOG, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(record.keys()))
+            if write_header:
+                writer.writeheader()
+            writer.writerow(record)
+    except Exception as exc:
+        logger.warning(f"Decision log write failed: {exc}")
 
 
 def load_configs():
@@ -184,7 +201,7 @@ def run():
 
                 # 6. Solve MPC
                 setpoints = mpc.solve(state, outdoor_series)
-                mpc.explain()
+                logger.info(mpc.explain())
 
                 # 7. Correct hvac_mode for any ON-commanded unit that has drifted
                 #    out of 'cool' mode (HA restart, power blip). Units are normally
@@ -198,9 +215,23 @@ def run():
                         )
                         ha.set_hvac_mode(ac_id, "cool", house)
 
-                # 8. Apply setpoints (includes read-back verification)
+                # 8. Apply setpoints (includes read-back verification).
+                #    Caught here so a write failure still gets a log record.
                 logger.info("Applying setpoints:")
-                ha.apply_setpoints(setpoints, house)
+                write_ok = True
+                try:
+                    ha.apply_setpoints(setpoints, house)
+                except Exception as exc:
+                    write_ok = False
+                    logger.error(f"Setpoint apply failed: {exc}", exc_info=True)
+
+                # 9. Append one row to the decision log CSV
+                _append_decision_log({
+                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "T_outdoor": round(outdoor, 1),
+                    "write_ok":  write_ok,
+                    **mpc.decision_record(),
+                })
 
             except Exception as exc:
                 logger.error(f"Tick failed: {exc}", exc_info=True)

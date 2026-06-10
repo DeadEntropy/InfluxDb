@@ -54,7 +54,11 @@ Usage
 """
 
 import itertools
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class BangBangMPC:
@@ -66,6 +70,7 @@ class BangBangMPC:
 
         mpc_cfg           = control_config["mpc"]
         self.horizon      = mpc_cfg["horizon_steps"]
+        self.tick_minutes = mpc_cfg["tick_minutes"]
         self.sp_on        = mpc_cfg["setpoint_on_f"]
         self.sp_off       = mpc_cfg["setpoint_off_f"]
         self.energy_w     = mpc_cfg["energy_weight"]
@@ -143,17 +148,22 @@ class BangBangMPC:
 
     # ── Diagnostics ───────────────────────────────────────────────────────
     def explain(self):
-        """Print diagnosis, ranked combinations, and projected outcome."""
+        """
+        Return a multi-line string summarising the last solve: comfort
+        diagnosis, all 8 combinations ranked by cost, and the projected
+        outcome for the chosen combo. Log via logger.info(mpc.explain()).
+        """
         if not hasattr(self, "_last_results"):
-            print("Call solve() first.")
-            return
+            return "Call solve() first."
+
+        lines = []
+        horizon_min = self.horizon * self.tick_minutes
 
         # ── 1. Comfort diagnosis ──────────────────────────────────────────
-        print(f"\n── Comfort diagnosis {'─' * 48}")
-        print(f"  {'Room':<26}  {'Temp':>7}  {'Target':>12}  Status")
-        print("  " + "─" * 62)
-        hot_rooms  = []
-        cold_rooms = []
+        lines.append(f"\n── Comfort diagnosis {'─' * 48}")
+        lines.append(f"  {'Room':<26}  {'Temp':>7}  {'Target':>12}  Status")
+        lines.append("  " + "─" * 62)
+        hot_rooms, cold_rooms = [], []
         for room in sorted(self.rooms):
             T   = self._current_state.get(room, float("nan"))
             tgt = self.targets[room]
@@ -166,24 +176,24 @@ class BangBangMPC:
             else:
                 status = "ok"
             tgt_str = f"{tgt['min_f']}–{tgt['max_f']}°F"
-            print(f"  {room:<26}  {T:>6.1f}°F  {tgt_str:>12}  {status}")
+            lines.append(f"  {room:<26}  {T:>6.1f}°F  {tgt_str:>12}  {status}")
 
         if hot_rooms:
-            print(f"\n  Needs cooling : {', '.join(hot_rooms)}")
+            lines.append(f"\n  Needs cooling : {', '.join(hot_rooms)}")
         if cold_rooms:
-            print(f"  Already cool  : {', '.join(cold_rooms)}")
+            lines.append(f"  Already cool  : {', '.join(cold_rooms)}")
         if not hot_rooms and not cold_rooms:
-            print("\n  All rooms within comfort band.")
+            lines.append("\n  All rooms within comfort band.")
 
         # ── 2. Ranked combinations ────────────────────────────────────────
-        print(f"\n── All {len(self._last_results)} combinations (ranked) {'─' * 38}")
-        print(f"  {'Combo (bed/liv/ext)':<22}  {'Setpoints':>30}  {'Cost':>10}")
-        print("  " + "─" * 68)
+        lines.append(f"\n── All {len(self._last_results)} combinations (ranked) {'─' * 38}")
+        lines.append(f"  {'Combo (bed/liv/ext)':<22}  {'Setpoints':>30}  {'Cost':>10}")
+        lines.append("  " + "─" * 68)
         for combo, sp, cost, _ in sorted(self._last_results, key=lambda x: x[2]):
             combo_str = "/".join("ON " if c else "off" for c in combo)
             sp_str    = " ".join(f"{ac.split('_')[0]}={v}" for ac, v in sp.items())
             marker    = " ◀ chosen" if combo == self._best_combo else ""
-            print(f"  {combo_str:<20}  {sp_str:>30}  {cost:>10.4f}{marker}")
+            lines.append(f"  {combo_str:<20}  {sp_str:>30}  {cost:>10.4f}{marker}")
 
         # ── 3. Projected outcome for chosen combo ─────────────────────────
         chosen_states = next(
@@ -191,18 +201,61 @@ class BangBangMPC:
             if combo == self._best_combo
         )
         final = chosen_states[-1]
-        horizon_min = len(chosen_states) * 10  # each step = 10 min; includes t=0
 
-        print(f"\n── Projected outcome in {horizon_min - 10} min (chosen combo) {'─' * 28}")
-        print(f"  {'Room':<26}  {'Now':>7}  {'In {h}min'.format(h=horizon_min-10):>9}  {'Target':>12}  Trend")
-        print("  " + "─" * 68)
+        lines.append(f"\n── Projected outcome in {horizon_min} min (chosen combo) {'─' * 28}")
+        lines.append(f"  {'Room':<26}  {'Now':>7}  {f'In {horizon_min}min':>9}  {'Target':>12}  Trend")
+        lines.append("  " + "─" * 68)
         for room in sorted(self.rooms):
-            T_now  = self._current_state.get(room, float("nan"))
-            T_end  = final.get(room, float("nan"))
-            tgt    = self.targets[room]
+            T_now   = self._current_state.get(room, float("nan"))
+            T_end   = final.get(room, float("nan"))
+            tgt     = self.targets[room]
             tgt_str = f"{tgt['min_f']}–{tgt['max_f']}°F"
-            delta  = T_end - T_now
-            trend  = f"{'▼' if delta < -0.2 else '▲' if delta > 0.2 else '─'} {abs(delta):.1f}°F"
+            delta   = T_end - T_now
+            trend   = f"{'▼' if delta < -0.2 else '▲' if delta > 0.2 else '─'} {abs(delta):.1f}°F"
             in_band = tgt["min_f"] <= T_end <= tgt["max_f"]
-            ok_str = "✓" if in_band else ("↑hot" if T_end > tgt["max_f"] else "↓cold")
-            print(f"  {room:<26}  {T_now:>6.1f}°F  {T_end:>8.1f}°F  {tgt_str:>12}  {trend}  {ok_str}")
+            ok_str  = "✓" if in_band else ("↑hot" if T_end > tgt["max_f"] else "↓cold")
+            lines.append(f"  {room:<26}  {T_now:>6.1f}°F  {T_end:>8.1f}°F  {tgt_str:>12}  {trend}  {ok_str}")
+
+        return "\n".join(lines)
+
+    def decision_record(self):
+        """
+        Return a flat dict representing this tick's MPC decision. Intended
+        for appending to the CSV decision log — one row per tick.
+
+        Columns:
+          T_<room>          current temperature per room (°F)
+          on_<ac>           1/0 — whether the MPC chose ON for each AC
+          sp_<ac>           applied setpoint (65 or 84°F) per AC
+          cost_chosen       cost of the chosen combination
+          cost_<binary>     cost for each of the 8 combinations, keyed by
+                            a 3-bit string e.g. "010" (bed=0,liv=1,ext=0)
+          proj_<room>       predicted temperature at horizon end (°F)
+        """
+        if not hasattr(self, "_last_results"):
+            return {}
+
+        record = {}
+
+        for room in self.rooms:
+            record[f"T_{room}"] = round(self._current_state.get(room, float("nan")), 2)
+
+        for ac, on in zip(self.ac_units, self._best_combo):
+            record[f"on_{ac}"]  = on
+            record[f"sp_{ac}"]  = self.sp_on if on else self.sp_off
+
+        record["cost_chosen"] = round(self._best_cost, 4)
+
+        for combo, _, cost, _ in self._last_results:
+            key = "".join(str(c) for c in combo)
+            record[f"cost_{key}"] = round(cost, 4)
+
+        chosen_states = next(
+            states for combo, _, _, states in self._last_results
+            if combo == self._best_combo
+        )
+        final = chosen_states[-1]
+        for room in self.rooms:
+            record[f"proj_{room}"] = round(final.get(room, float("nan")), 2)
+
+        return record
