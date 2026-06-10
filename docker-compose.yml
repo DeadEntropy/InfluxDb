@@ -1,7 +1,8 @@
 services:
-  notebooks:
-    build: .
-    ports:
-      - "8888:8888"
+  shadow:
+    image: deadentropy/mpc-shadow:latest
+    env_file: thermal_control/.env
     volumes:
-      - .:/workspace
+      # Logs land directly on the server filesystem — copy with scp after 24h
+      - ./thermal_control/logs:/app/thermal_control/logs
+    restart: "no"

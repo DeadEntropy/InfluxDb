@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY thermal_control/requirements.txt ./thermal_control/requirements.txt
+RUN pip install --no-cache-dir -r thermal_control/requirements.txt
+
+# Copy everything except what .dockerignore excludes.
+# Includes code, configs, and model weights — but NOT .env or logs.
+COPY . .
+
+CMD ["python", "thermal_control/shadow_run.py"]

@@ -86,7 +86,7 @@ round to whole °F) inside `_derive_ac_on`, and re-run Pass 2. If the offsets
 turn out to be near zero, document that and keep the simple code with a comment.
 
 ### 4. Sensor-failure fallback fabricates a comfortable temperature
-- [ ] `scheduler.py:56-57, 68-97`
+- [x] `scheduler.py`, `control/mpc.py` — **Fixed 2026-06-10**
 
 When a room sensor is stale >30 min, `fill_missing()` substitutes 74°F — right
 at the comfort band. A bedroom with a dead battery will read as "comfortable"
@@ -210,7 +210,7 @@ is auditable alongside each set of weights.
 ## P2 — Design gaps & robustness improvements
 
 ### 10. The documented schedule feature doesn't exist in code or config
-- [ ] `config/README.md:44-91`, `README.md:44-45` vs `config/control.yaml`, `scheduler.py`, `control/mpc.py:73-82`
+- [x] `control/schedule.py`, `control/mpc.py`, `scheduler.py`, `config/control.yaml` — **Fixed 2026-06-10**
 
 Both READMEs describe `targets.schedule` (time-of-day windows, midnight
 wrap-around, priority order static-override > schedule > default, "the scheduler

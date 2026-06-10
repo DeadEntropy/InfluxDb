@@ -23,10 +23,50 @@ targets:
     min_f: 75
     max_f: 77
 
-  # Per-room overrides (optional)
+  # ── Time-of-day schedule ──────────────────────────────────────────────────
+  # Entries take effect at their time (24h local, America/New_York) and stay
+  # active until the next entry. The list wraps midnight: the last entry
+  # covers the gap back to the first entry's time.
+  #
+  # Priority: static per-room override (below) > schedule room > default
+  # Wide band {min_f: 65, max_f: 85} = "don't care" — zero discomfort penalty
+  # at any realistic indoor temperature, so the MPC ignores that room.
+  schedule:
+    - name: sleeping            # 22:00 → 06:00
+      time: "22:00"
+      rooms:
+        # Bedrooms: tighter band — sleeping comfort matters more than default
+        master_bedroom: {min_f: 74, max_f: 76}
+        kids_bedroom:   {min_f: 74, max_f: 76}
+        # bedroom_ac also covers anna_office — widen it so the AC isn't split
+        # between sleeping people and an empty office
+        anna_office:    {min_f: 65, max_f: 85}
+        # living_ac zone: all unoccupied at night → let living_ac go quiet
+        dining_room:    {min_f: 65, max_f: 77}
+        kitchen:        {min_f: 65, max_f: 85}
+        family_room:    {min_f: 65, max_f: 77}
+        # extension_ac zone: both rooms empty at night → extension_ac goes off
+        tv_room:        {min_f: 65, max_f: 77}
+        nicolas_office: {min_f: 65, max_f: 85}
+
+    - name: daytime             # 06:00 → 15:00
+      time: "06:00"
+      rooms: 
+        nicolas_office: {min_f: 74, max_f: 76}
+
+    - name: early afternoon         # 15:00 → 16:30
+      time: "15:00"
+      rooms: 
+        nicolas_office: {min_f: 65, max_f: 85}
+
+    - name: late afternoon         # 16:30 → 22:00
+      time: "16:30"
+      rooms: {}
+
+  # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:
-  #   min_f: 70
-  #   max_f: 74
+  #   min_f: 73
+  #   max_f: 76
 
 ac_power:
   # Approximate watts when actively cooling (for energy penalty scaling)

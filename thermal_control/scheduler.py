@@ -40,10 +40,11 @@ CONTROL_YAML = ROOT / "config" / "control.yaml"
 
 sys.path.insert(0, str(REPO_ROOT))
 
-from thermal_control.model.simulate  import HouseSimulator
-from thermal_control.control.mpc     import BangBangMPC
-from thermal_control.control.forecast import build_outdoor_series
-from thermal_control.ha_bridge       import controller as ha
+from thermal_control.model.simulate      import HouseSimulator
+from thermal_control.control.mpc         import BangBangMPC
+from thermal_control.control.forecast    import build_outdoor_series
+from thermal_control.control.schedule    import resolve_targets_for_rooms
+from thermal_control.ha_bridge           import controller as ha
 
 # ── Config ────────────────────────────────────────────────────────────────
 load_dotenv(ROOT / ".env")
@@ -103,7 +104,13 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
     """
     For rooms missing from current_temps, use cached value (if fresh)
     or fallback_f. Updates cache with fresh readings.
-    Returns complete {room_id: temp_F} for all modelled rooms.
+
+    Returns (filled, missing_rooms):
+      filled       : {room_id: temp_F} — complete dict for all modelled rooms;
+                     stale/never-received rooms get a simulation value but must
+                     NOT steer the MPC cost function (see missing_rooms).
+      missing_rooms: set of room_ids whose value is fabricated — the MPC
+                     excludes these from the discomfort cost for this tick.
     """
     now = datetime.now(timezone.utc)
     stale_cutoff = now - timedelta(minutes=STALE_LIMIT_MINUTES)
@@ -112,6 +119,7 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
         cache[room_id] = (temp, now)
 
     filled = {}
+    missing_rooms = set()
     for room_id in rooms:
         if room_id in current_temps:
             filled[room_id] = current_temps[room_id]
@@ -122,13 +130,22 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
                 logger.debug(f"{room_id}: using cached {cached_temp:.1f}°F "
                              f"(age {(now - cached_at).seconds // 60} min)")
             else:
-                filled[room_id] = fallback_f
-                logger.warning(f"{room_id}: cache stale, using fallback {fallback_f}°F")
+                # Stale but a real past reading — better propagation estimate
+                # than a fabricated 74°F, but excluded from MPC cost this tick.
+                filled[room_id] = cached_temp
+                missing_rooms.add(room_id)
+                logger.warning(
+                    f"{room_id}: sensor stale >{STALE_LIMIT_MINUTES} min "
+                    f"(last {cached_temp:.1f}°F) — excluded from MPC cost"
+                )
         else:
             filled[room_id] = fallback_f
-            logger.warning(f"{room_id}: no reading ever received, using fallback {fallback_f}°F")
+            missing_rooms.add(room_id)
+            logger.warning(
+                f"{room_id}: no reading ever received — excluded from MPC cost"
+            )
 
-    return filled
+    return filled, missing_rooms
 
 
 def run():
@@ -163,7 +180,13 @@ def run():
                 logger.info(f"Live sensors ({len(current_temps)}/{len(sim.rooms)}): "
                             + ", ".join(f"{r}={t:.1f}°F" for r, t in sorted(current_temps.items())))
 
-                state = fill_missing(current_temps, sensor_cache, sim.rooms, FALLBACK_TEMP_F)
+                state, missing_rooms = fill_missing(
+                    current_temps, sensor_cache, sim.rooms, FALLBACK_TEMP_F
+                )
+                if missing_rooms:
+                    logger.warning(
+                        f"Missing sensors this tick: {', '.join(sorted(missing_rooms))}"
+                    )
 
                 # 2. Read AC states — mode + action logged each tick so anomalies
                 #    (unexpected mode drift) are visible in the log history.
@@ -189,8 +212,9 @@ def run():
                 )
                 logger.info(f"Outdoor series: {outdoor_desc}")
 
-                # 6. Solve MPC
-                setpoints = mpc.solve(state, outdoor_series)
+                # 6. Resolve schedule and solve MPC
+                targets = resolve_targets_for_rooms(control, sim.rooms, datetime.now())
+                setpoints = mpc.solve(state, outdoor_series, missing_rooms, targets)
                 logger.info(mpc.explain())
 
                 # 7. Correct hvac_mode for any ON-commanded unit that has drifted

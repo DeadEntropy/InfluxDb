@@ -75,10 +75,13 @@ class BangBangMPC:
         self.sp_off       = mpc_cfg["setpoint_off_f"]
         self.energy_w     = mpc_cfg["energy_weight"]
 
-        # Comfort targets per room (with per-room overrides)
+        # Static fallback targets (used when solve() is called without targets,
+        # e.g. from dry_run.py). The scheduler passes resolved per-tick targets
+        # via solve(); "default" and "schedule" are not room ids.
+        RESERVED          = {"default", "schedule"}
         default           = control_config["targets"]["default"]
         overrides         = {k: v for k, v in control_config["targets"].items()
-                             if k != "default"}
+                             if k not in RESERVED}
         self.targets      = {
             room: dict(overrides.get(room, default))
             for room in self.rooms
@@ -91,16 +94,19 @@ class BangBangMPC:
                              for ac in self.ac_units}
 
     # ── Cost function ─────────────────────────────────────────────────────
-    def _cost(self, states, ac_combo):
+    def _cost(self, states, ac_combo, missing_rooms):
         """
-        states    : list of state dicts from simulator.rollout (includes t=0)
-        ac_combo  : tuple of 0/1 per AC unit (same order as self.ac_units)
+        states        : list of state dicts from simulator.rollout (includes t=0)
+        ac_combo      : tuple of 0/1 per AC unit (same order as self.ac_units)
+        missing_rooms : set of room_ids to exclude from discomfort cost this tick
         """
         discomfort = 0.0
         for state in states[1:]:                      # skip initial state
             for room in self.rooms:
+                if room in missing_rooms:
+                    continue                           # no data — don't steer cost
                 T   = state[room]
-                tgt = self.targets[room]
+                tgt = self._current_targets[room]
                 discomfort += max(0.0, T - tgt["max_f"]) ** 2   # too hot
                 discomfort += max(0.0, tgt["min_f"] - T) ** 2   # too cold
 
@@ -111,12 +117,23 @@ class BangBangMPC:
         return discomfort + energy
 
     # ── Main solve ────────────────────────────────────────────────────────
-    def solve(self, current_state, outdoor_series):
+    def solve(self, current_state, outdoor_series, missing_rooms=None, targets=None):
         """
         current_state  : {room_id: temp_F}       — from independent sensors
         outdoor_series : list of float (°F)       — one value per horizon step
+        missing_rooms  : set of room_ids whose sensor is stale/absent this tick;
+                         excluded from discomfort cost (fabricated data must not
+                         steer the MPC).
+        targets        : {room_id: {min_f, max_f}} resolved for this tick by
+                         resolve_targets_for_rooms(); falls back to self.targets
+                         (init-time snapshot) when not provided.
         Returns        : {ac_id: setpoint_F}      — 65°F (ON) or 84°F (OFF)
         """
+        if missing_rooms is None:
+            missing_rooms = set()
+        self._missing_rooms   = missing_rooms
+        self._current_targets = targets if targets is not None else self.targets
+
         best_cost      = float("inf")
         best_setpoints = None
         best_combo     = None
@@ -132,7 +149,7 @@ class BangBangMPC:
                 [setpoints] * self.horizon,
                 outdoor_series,
             )
-            cost = self._cost(states, combo)
+            cost = self._cost(states, combo, missing_rooms)
             results.append((combo, setpoints, cost, states))
 
             if cost < best_cost:
@@ -155,6 +172,10 @@ class BangBangMPC:
         """
         if not hasattr(self, "_last_results"):
             return "Call solve() first."
+        if not hasattr(self, "_missing_rooms"):
+            self._missing_rooms = set()
+        if not hasattr(self, "_current_targets"):
+            self._current_targets = self.targets
 
         lines = []
         horizon_min = self.horizon * self.tick_minutes
@@ -166,7 +187,12 @@ class BangBangMPC:
         hot_rooms, cold_rooms = [], []
         for room in sorted(self.rooms):
             T   = self._current_state.get(room, float("nan"))
-            tgt = self.targets[room]
+            tgt = self._current_targets[room]
+            if room in self._missing_rooms:
+                status = "NO DATA  (excluded from cost)"
+                tgt_str = f"{tgt['min_f']}–{tgt['max_f']}°F"
+                lines.append(f"  {room:<26}  {'---':>7}   {tgt_str:>12}  {status}")
+                continue
             if T > tgt["max_f"]:
                 status = f"TOO HOT  +{T - tgt['max_f']:.1f}°F"
                 hot_rooms.append(room)
@@ -208,7 +234,7 @@ class BangBangMPC:
         for room in sorted(self.rooms):
             T_now   = self._current_state.get(room, float("nan"))
             T_end   = final.get(room, float("nan"))
-            tgt     = self.targets[room]
+            tgt     = self._current_targets[room]
             tgt_str = f"{tgt['min_f']}–{tgt['max_f']}°F"
             delta   = T_end - T_now
             trend   = f"{'▼' if delta < -0.2 else '▲' if delta > 0.2 else '─'} {abs(delta):.1f}°F"
