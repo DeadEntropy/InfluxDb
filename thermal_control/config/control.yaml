@@ -69,7 +69,11 @@ targets:
   #   max_f: 76
 
 ac_power:
-  # Approximate watts when actively cooling (for energy penalty scaling)
-  bedroom_ac:   1200
-  living_ac:    1000
-  extension_ac:  900
+  # Watts when actively cooling (for energy penalty scaling).
+  # Measured Jun 4-11 2026 (ac_power_status_check.py): steady-state median
+  # circuit power while hvac_action=cooling. living/bedroom are the dedicated
+  # compressor+air-handler circuits (idle ~0 W); extension is metered via the
+  # two sub-panels, so its ~100 W idle baseline of other loads is subtracted.
+  bedroom_ac:   1600
+  living_ac:    2400
+  extension_ac: 1950
