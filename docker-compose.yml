@@ -1,8 +1,29 @@
+# One image, two modes — never run both at once:
+#   docker compose up shadow                   shadow: log MPC vs real thermostats,
+#                                              write nothing, exits after 24h
+#   docker compose --profile prod up -d prod   PROD: 10-min control loop that WRITES
+#                                              setpoints to the real ACs
 services:
   shadow:
-    image: deadentropy/mpc-shadow:latest
+    image: deadentropy/mpc-thermal:latest
+    command: ["python", "thermal_control/shadow_run.py"]
     env_file: thermal_control/.env
     volumes:
       # Logs land directly on the server filesystem — copy with scp after 24h
       - ./thermal_control/logs:/app/thermal_control/logs
     restart: "no"
+
+  prod:
+    image: deadentropy/mpc-thermal:latest
+    command: ["python", "thermal_control/scheduler.py"]
+    env_file: thermal_control/.env
+    volumes:
+      - ./thermal_control/logs:/app/thermal_control/logs
+    # The live controller must come back after a crash or server reboot —
+    # otherwise ACs could be left forced ON at 65°F with nothing to stop them.
+    restart: unless-stopped
+    # On stop, scheduler.py writes 76°F safe setpoints to all three ACs
+    # (HTTP calls + read-back); the default 10s grace period is too tight.
+    stop_grace_period: 30s
+    # Profile gate: a bare `docker compose up` must never start the live controller.
+    profiles: ["prod"]

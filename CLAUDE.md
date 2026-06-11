@@ -31,13 +31,19 @@ python thermal_control/shadow_run.py   # 24h loop: log MPC decisions vs real the
 python thermal_control/scheduler.py    # LIVE 10-min control loop — writes setpoints to real ACs
 ```
 
-**Shadow deployment** (Docker image run on a remote server, see `BUILD_HELP.bat`):
+**Deployment** (one Docker image, shadow or prod mode, run on a remote server — see `BUILD_HELP.bat`):
 
 ```bash
-docker build --no-cache -f Dockerfile.shadow -t mpc-shadow .
-docker tag mpc-shadow deadentropy/mpc-shadow:latest && docker push deadentropy/mpc-shadow:latest
-# on the server: docker compose up  (uses docker-compose.yml; logs land in thermal_control/logs/)
+docker build --no-cache -f Dockerfile.mpc -t mpc-thermal .
+docker tag mpc-thermal deadentropy/mpc-thermal:latest && docker push deadentropy/mpc-thermal:latest
+# on the server (logs land in thermal_control/logs/):
+docker compose up shadow                   # shadow: log only, writes nothing, exits after 24h
+docker compose --profile prod up -d prod   # PROD: writes setpoints to the real ACs
 ```
+
+The image's default CMD is shadow mode; the `prod` compose service overrides it with
+`scheduler.py` and is profile-gated so a bare `docker compose up` never starts the live
+controller. Never run both services at once.
 
 The root `Dockerfile` is unrelated — it's the JupyterLab devcontainer image.
 
