@@ -27,6 +27,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
@@ -150,6 +151,13 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
 
 def run():
     house, control = load_configs()
+
+    local_tz = ZoneInfo(house["location"]["timezone"])
+    _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
+    for handler in logging.root.handlers:
+        if handler.formatter:
+            handler.formatter.converter = _local_time
+
     sim = HouseSimulator(WEIGHTS_DIR, house)
     mpc = BangBangMPC(sim, house, control)
 
@@ -171,7 +179,7 @@ def run():
     try:
         while True:
             tick_start = time.monotonic()
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now(tz=local_tz).strftime("%Y-%m-%d %H:%M:%S")
             logger.info(f"── Tick {now} ─────────────────────────")
 
             try:
@@ -213,7 +221,7 @@ def run():
                 logger.info(f"Outdoor series: {outdoor_desc}")
 
                 # 6. Resolve schedule and solve MPC
-                targets = resolve_targets_for_rooms(control, sim.rooms, datetime.now())
+                targets = resolve_targets_for_rooms(control, sim.rooms, datetime.now(tz=local_tz))
                 setpoints = mpc.solve(state, outdoor_series, missing_rooms, targets)
                 logger.info(mpc.explain())
 
@@ -241,7 +249,7 @@ def run():
 
                 # 9. Append one row to the decision log CSV
                 _append_decision_log({
-                    "timestamp": datetime.now().isoformat(timespec="seconds"),
+                    "timestamp": datetime.now(tz=local_tz).isoformat(timespec="seconds"),
                     "T_outdoor": round(outdoor, 1),
                     "write_ok":  write_ok,
                     **mpc.decision_record(),

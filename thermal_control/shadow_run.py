@@ -19,6 +19,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 from dotenv import load_dotenv
@@ -94,11 +95,17 @@ def run():
     with open(HOUSE_YAML)   as f: house   = yaml.safe_load(f)
     with open(CONTROL_YAML) as f: control = yaml.safe_load(f)
 
+    local_tz = ZoneInfo(house["location"]["timezone"])
+    _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
+    for handler in logging.root.handlers:
+        if handler.formatter:
+            handler.formatter.converter = _local_time
+
     sim = HouseSimulator(WEIGHTS_DIR, house)
     mpc = BangBangMPC(sim, house, control)
 
     tick_seconds  = TICK_MINUTES * 60
-    deadline      = datetime.now() + timedelta(hours=SHADOW_HOURS)
+    deadline      = datetime.now(tz=local_tz) + timedelta(hours=SHADOW_HOURS)
     sensor_cache  = {}
     outdoor_cache = (FALLBACK_TEMP_F, datetime.min.replace(tzinfo=timezone.utc))
     tick_count    = 0
@@ -107,10 +114,10 @@ def run():
     logger.info(f"Stopping at {deadline:%Y-%m-%d %H:%M:%S}")
     logger.info(f"Logging to {SHADOW_LOG}")
 
-    while datetime.now() < deadline:
+    while datetime.now(tz=local_tz) < deadline:
         tick_start = time.monotonic()
         tick_count += 1
-        logger.info(f"── Tick {tick_count}  {datetime.now():%Y-%m-%d %H:%M:%S}")
+        logger.info(f"── Tick {tick_count}  {datetime.now(tz=local_tz):%Y-%m-%d %H:%M:%S}")
 
         try:
             # Room temperatures
@@ -133,7 +140,7 @@ def run():
             outdoor_series, _ = build_outdoor_series(outdoor, house, control)
 
             # Resolve schedule and solve (no writes to HA)
-            now_dt        = datetime.now()
+            now_dt        = datetime.now(tz=local_tz)
             targets       = resolve_targets_for_rooms(control, sim.rooms, now_dt)
             schedule_name = resolve_active_entry_name(control, now_dt)
             mpc.solve(state, outdoor_series, missing_rooms, targets)
