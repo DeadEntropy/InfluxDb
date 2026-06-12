@@ -58,10 +58,19 @@ with respect to the schedule — it only sees the resolved target dict.
 
 **Objective function:**
 ```
-cost = Σ_t Σ_rooms  max(0, T − T_max)²   (too hot penalty)
-                  + max(0, T_min − T)²   (too cold penalty)
-     + energy_weight · Σ_j power_j · AC_on_j
+cost = Σ_t w_t · [ Σ_rooms  max(0, T − T_max)²   (too hot penalty)
+                          + max(0, T_min − T)² ] (too cold penalty)
+     + mean(w) · energy_weight · Σ_j power_j · AC_on_j
 ```
+
+`w_t` is a per-step discount, linear from `discount_start` (1.0 at
+t+10min) to `discount_end` (0.25 at the 3h horizon end). The thermal
+model accumulates error over the rollout, so a breach predicted 3 hours
+out counts for a quarter of one happening now — the MPC reacts strongly
+to present breaches and is less willing to spend energy on speculative
+future ones. The energy term is scaled by `mean(w)` (equivalent to
+spreading it per-step and discounting), so the discount does not shift
+the discomfort/energy balance.
 
 The energy penalty is small (weight 0.05) and only breaks ties —
 comfort always dominates.
@@ -93,4 +102,6 @@ See `config/control.yaml`:
 - `horizon_steps`  : 18 (3 hours at 10-min resolution)
 - `targets`        : per-room comfort bands in °F
 - `energy_weight`  : 0.05 (small, only breaks ties)
+- `discount_start` / `discount_end` : 1.0 → 0.25 — per-step cost discount
+  across the horizon (set both to 1.0 to disable)
 - `use_forecast`   : false — set true to use Open-Meteo forecast over the horizon

@@ -5,6 +5,15 @@
 #                                              setpoints to the real ACs
 # Both services default to :latest; pin a specific build with e.g.
 #   MPC_TAG=a1b2c3d docker compose --profile prod up -d prod
+#
+# Config and model weights are volume-mounted (read-only) over the copies baked
+# into the image, so they can be edited on the server without a rebuild:
+#   - config/*.yaml edits are picked up by the prod scheduler on its next tick
+#     (hot-reload); shadow picks them up on its next start.
+#   - new model/weights/ are picked up whenever the scheduler reloads config or
+#     either service restarts.
+# One-time setup: copy thermal_control/config/ and thermal_control/model/weights/
+# next to this file on the server (the mounts replace the baked-in copies).
 services:
   shadow:
     image: deadentropy/mpc-thermal:${MPC_TAG:-latest}
@@ -13,6 +22,8 @@ services:
     volumes:
       # Logs land directly on the server filesystem — copy with scp after 24h
       - ./thermal_control/logs:/app/thermal_control/logs
+      - ./thermal_control/config:/app/thermal_control/config:ro
+      - ./thermal_control/model/weights:/app/thermal_control/model/weights:ro
     restart: "no"
 
   prod:
@@ -21,6 +32,8 @@ services:
     env_file: thermal_control/.env
     volumes:
       - ./thermal_control/logs:/app/thermal_control/logs
+      - ./thermal_control/config:/app/thermal_control/config:ro
+      - ./thermal_control/model/weights:/app/thermal_control/model/weights:ro
     # The live controller must come back after a crash or server reboot —
     # otherwise ACs could be left forced ON at 65°F with nothing to stop them.
     restart: unless-stopped

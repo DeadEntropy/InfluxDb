@@ -48,6 +48,11 @@ The image's default CMD is shadow mode; the `prod` compose service overrides it 
 `scheduler.py` and is profile-gated so a bare `docker compose up` never starts the live
 controller. Never run both services at once.
 
+`config/` and `model/weights/` are volume-mounted read-only over the baked-in copies,
+so bands/parameters/weights can be edited on the server without a rebuild: the prod
+scheduler hot-reloads the yaml on its next tick (invalid yaml is skipped, last-good
+config kept); shadow picks changes up on its next start.
+
 The root `Dockerfile` is unrelated — it's the JupyterLab devcontainer image.
 
 To analyze a shadow-run log, use the `shadow-analysis` skill (`.claude/skills/shadow-analysis/`) rather than ad-hoc pandas.

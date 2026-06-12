@@ -86,7 +86,11 @@ def build_outdoor_series(outdoor_f, house_config, control_config):
     """
     Build the outdoor temperature series for the MPC horizon.
 
-    Uses the Open-Meteo forecast when use_forecast is true; falls back to
+    When use_forecast is true, the Open-Meteo forecast supplies only the
+    *trend*: each step is the current sensor reading plus the forecast's
+    delta from now. The level always comes from the local sensor because
+    Open-Meteo's grid temperature carries a siting bias relative to the
+    pool soffit sensor the thermal model was trained on. Falls back to
     repeating the current observed value. Returns (series, description) so
     callers can log the source without duplicating the fallback logic.
 
@@ -105,8 +109,13 @@ def build_outdoor_series(outdoor_f, house_config, control_config):
             step_minutes,
         )
         if forecast is not None:
-            desc = f"forecast {forecast[0]:.1f}–{forecast[-1]:.1f}°F over horizon"
-            return forecast, desc
+            series = [outdoor_f + (f - forecast[0]) for f in forecast]
+            delta_end = series[-1] - outdoor_f
+            desc = (
+                f"sensor {outdoor_f:.1f}°F + forecast delta "
+                f"{delta_end:+.1f}°F over horizon"
+            )
+            return series, desc
         desc = f"constant {outdoor_f:.1f}°F (forecast fetch failed)"
         return [outdoor_f] * horizon, desc
 

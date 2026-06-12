@@ -4,6 +4,8 @@ scheduler.py
 Main 10-minute MPC control loop.
 
 Every tick:
+  0. Hot-reload config/*.yaml if edited on disk (volume-mounted in Docker);
+     a failed reload keeps the last-good config and never stops the loop
   1. Read all room temperatures from independent Zigbee sensors via HA REST API
   2. Read outdoor temperature from pool soffit sensor
   3. Solve bang-bang MPC over all 2³=8 AC combinations
@@ -101,6 +103,36 @@ def load_configs():
     return house, control
 
 
+def _config_mtimes():
+    return (HOUSE_YAML.stat().st_mtime, CONTROL_YAML.stat().st_mtime)
+
+
+def _maybe_reload(known_mtimes):
+    """
+    Detect on-disk changes to house.yaml/control.yaml (volume-mounted in
+    Docker, editable on the server) and rebuild the simulator + MPC from
+    the new config — also picking up any retrained weights in WEIGHTS_DIR.
+
+    Returns (house, control, sim, mpc, mtimes) on a successful reload,
+    None when nothing changed. Every failure (mid-edit YAML, transient
+    stat error, bad weights) is logged and swallowed so the running
+    controller keeps its last-good config; it retries next tick.
+    """
+    try:
+        mtimes = _config_mtimes()
+        if mtimes == known_mtimes:
+            return None
+        house, control = load_configs()
+        sim = HouseSimulator(WEIGHTS_DIR, house)
+        mpc = BangBangMPC(sim, house, control)
+        logger.info("Config change detected — reloaded house.yaml/control.yaml, "
+                    "rebuilt simulator and MPC")
+        return house, control, sim, mpc, mtimes
+    except Exception as exc:
+        logger.error(f"Config reload failed — keeping previous config: {exc}")
+        return None
+
+
 def fill_missing(current_temps, cache, rooms, fallback_f):
     """
     For rooms missing from current_temps, use cached value (if fresh)
@@ -151,6 +183,7 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
 
 def run():
     house, control = load_configs()
+    config_mtimes = _config_mtimes()
 
     local_tz = ZoneInfo(house["location"]["timezone"])
     _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
@@ -182,6 +215,12 @@ def run():
             tick_start = time.monotonic()
             now = datetime.now(tz=local_tz).strftime("%Y-%m-%d %H:%M:%S")
             logger.info(f"── Tick {now} ─────────────────────────")
+
+            # 0. Hot-reload config edited on the server (never raises)
+            reloaded = _maybe_reload(config_mtimes)
+            if reloaded:
+                house, control, sim, mpc, config_mtimes = reloaded
+                tick_seconds = control["mpc"]["tick_minutes"] * 60
 
             try:
                 # 1. Read room temperatures

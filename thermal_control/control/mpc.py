@@ -23,9 +23,15 @@ controller's own sensor to make the switching decision.
 
 Objective
 ─────────
-  cost = Σ_t Σ_rooms  [ max(0, T_room(t) − T_max)²          # too hot
-                       + max(0, T_min − T_room(t))² ]        # too cold
-       + energy_weight · Σ_j  power_j · AC_on_j              # energy
+  cost = Σ_t w_t · Σ_rooms  [ max(0, T_room(t) − T_max)²     # too hot
+                             + max(0, T_min − T_room(t))² ]   # too cold
+       + mean(w) · energy_weight · Σ_j  power_j · AC_on_j     # energy
+
+where w_t decreases linearly from discount_start (step 1) to discount_end
+(last step) — model error accumulates over the rollout, so far-future
+predicted breaches count less than near-certain present ones. The energy
+term is scaled by mean(w) (equivalent to spreading it per-step and
+discounting), which preserves the discomfort/energy balance.
 
 Enumeration
 ───────────
@@ -75,6 +81,14 @@ class BangBangMPC:
         self.sp_off       = mpc_cfg["setpoint_off_f"]
         self.energy_w     = mpc_cfg["energy_weight"]
 
+        # Per-step discount weights (model error grows over the horizon).
+        # Defaults make this a no-op when the config keys are absent.
+        self.step_weights = np.linspace(
+            mpc_cfg.get("discount_start", 1.0),
+            mpc_cfg.get("discount_end", 1.0),
+            self.horizon,
+        )
+
         # Static fallback targets (used when solve() is called without targets,
         # e.g. from dry_run.py). The scheduler passes resolved per-tick targets
         # via solve(); "default" and "schedule" are not room ids.
@@ -101,16 +115,18 @@ class BangBangMPC:
         missing_rooms : set of room_ids to exclude from discomfort cost this tick
         """
         discomfort = 0.0
-        for state in states[1:]:                      # skip initial state
+        for w, state in zip(self.step_weights, states[1:]):   # skip initial state
             for room in self.rooms:
                 if room in missing_rooms:
                     continue                           # no data — don't steer cost
                 T   = state[room]
                 tgt = self._current_targets[room]
-                discomfort += max(0.0, T - tgt["max_f"]) ** 2   # too hot
-                discomfort += max(0.0, tgt["min_f"] - T) ** 2   # too cold
+                discomfort += w * max(0.0, T - tgt["max_f"]) ** 2   # too hot
+                discomfort += w * max(0.0, tgt["min_f"] - T) ** 2   # too cold
 
-        energy = sum(
+        # mean(w) ≡ spreading the energy term per-step and discounting it —
+        # keeps the discomfort/energy balance independent of the discount.
+        energy = self.step_weights.mean() * sum(
             self.energy_w * self.ac_power[ac] * on
             for ac, on in zip(self.ac_units, ac_combo)
         )

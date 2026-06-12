@@ -12,10 +12,22 @@ mpc:
   # fewer ACs running when multiple combinations achieve equal comfort
   energy_weight: 0.05
 
+  # Horizon discounting — down-weight far-future steps because model error
+  # accumulates over the rollout: a breach predicted at t+3h is far less
+  # certain than one at t+10min. Linear from discount_start at step 1 to
+  # discount_end at the last step. The energy term is scaled by the mean
+  # weight so the discomfort/energy balance is unaffected.
+  # Set both to 1.0 to disable (also the default when the keys are absent).
+  discount_start: 1.0
+  discount_end: 0.25
+
   # Set true to fetch a 3-hour outdoor temperature forecast from Open-Meteo
-  # and feed it into the MPC horizon instead of repeating the current reading.
-  # Set false to use the current observed outdoor temperature as a constant.
-  use_forecast: false
+  # and apply its *trend* to the MPC horizon: each step = current sensor
+  # reading + the forecast's delta from now. The level always comes from the
+  # local sensor (Open-Meteo's grid value is biased vs the pool soffit sensor
+  # the model was trained on); the forecast only supplies the expected change,
+  # e.g. evening cool-down. Set false to repeat the current reading flat.
+  use_forecast: true
 
 targets:
   # Comfort band in °F — penalty applied outside this range
