@@ -59,6 +59,20 @@ block (see issue 12).
 A cheaper stopgap: shorten the horizon to ~60 min, which limits how much
 hypothetical overshoot a constant action can accumulate.
 
+**Discussion 2026-06-12** — concern re-raised ("barrier risk": oscillation around
+a single target temp). Clarified that the comfort *band* (75–77°F, zero cost
+inside) already provides a 2°F deadband, so oscillation around a single setpoint
+can't happen; the real limit-cycle mechanism is the constant-action horizon
+described above (ON/OFF costs near-tie at the warm band edge). A faster tick was
+also considered and rejected: `tick_minutes` must equal the model timestep (the
+RidgeCV models predict ΔT per 10-min step, training data is on a 10-min grid),
+so going to 5 min requires reprocessing + retraining — and a faster tick halves
+the minimum compressor cycle, making issue 14 worse. Agreed plan, in order:
+1. Measure first: 24h shadow run, check switches/AC/day (shadow-analysis skill,
+   decision-stability section) before adding mechanism.
+2. Anti-short-cycling guard (issue 14).
+3. Two-block enumeration (the proposed fix above).
+
 ### 3. Simulator switches ACs on *room* sensor temps, not AC controller sensor temps
 - [ ] `model/simulate.py:54-68`
 
@@ -298,6 +312,15 @@ around band edges, see issue 2). Compressors dislike short cycles.
 enforced in the scheduler: if a unit switched recently, restrict the enumeration
 to combos that keep its current state. Optionally also a switching penalty
 `switch_weight · Σ|combo − previous_combo|` in the cost as a softer version.
+
+**Discussion 2026-06-12** — confirmed as the right place to fix chattering (see
+issue 2 addendum for the agreed order: shadow-run measurement first). A
+temperature-hysteresis alternative (cool to `target − 0.5°F` before releasing)
+was considered and rejected: it duplicates the deadband the comfort band already
+provides and fights the MPC's own optimisation. Hysteresis in *time* (min on/off
+or switching penalty) is what actually protects the compressor. Note the 10-min
+tick is currently the only de-facto short-cycling protection — revisit this
+issue before any change to `tick_minutes`.
 
 ### 15. Outdoor temperature fallbacks are weak
 - [ ] `scheduler.py:107, 129-135`

@@ -1,5 +1,12 @@
 FROM python:3.11-slim
 
+# Git commit the image was built from — passed by BUILD_HELP.bat, "unknown"
+# only for ad-hoc local builds. Surfaced as $MPC_VERSION inside the container
+# (logged at startup) and as an OCI label (docker inspect).
+ARG GIT_SHA=unknown
+ENV MPC_VERSION=$GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA
+
 WORKDIR /app
 
 COPY thermal_control/requirements.txt ./thermal_control/requirements.txt

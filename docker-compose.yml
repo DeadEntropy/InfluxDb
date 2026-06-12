@@ -3,9 +3,11 @@
 #                                              write nothing, exits after 24h
 #   docker compose --profile prod up -d prod   PROD: 10-min control loop that WRITES
 #                                              setpoints to the real ACs
+# Both services default to :latest; pin a specific build with e.g.
+#   MPC_TAG=a1b2c3d docker compose --profile prod up -d prod
 services:
   shadow:
-    image: deadentropy/mpc-thermal:latest
+    image: deadentropy/mpc-thermal:${MPC_TAG:-latest}
     command: ["python", "thermal_control/shadow_run.py"]
     env_file: thermal_control/.env
     volumes:
@@ -14,7 +16,7 @@ services:
     restart: "no"
 
   prod:
-    image: deadentropy/mpc-thermal:latest
+    image: deadentropy/mpc-thermal:${MPC_TAG:-latest}
     command: ["python", "thermal_control/scheduler.py"]
     env_file: thermal_control/.env
     volumes:

@@ -15,6 +15,7 @@ Run from the repo root:
 
 import csv
 import logging
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -111,6 +112,7 @@ def run():
     tick_count    = 0
 
     logger.info(f"Shadow MPC started — {SHADOW_HOURS}h run, {TICK_MINUTES}-min ticks")
+    logger.info(f"Code version: {os.environ.get('MPC_VERSION', 'dev (not containerized)')}")
     logger.info(f"Stopping at {deadline:%Y-%m-%d %H:%M:%S}")
     logger.info(f"Logging to {SHADOW_LOG}")
 

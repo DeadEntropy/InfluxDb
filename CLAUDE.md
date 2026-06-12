@@ -34,9 +34,12 @@ python thermal_control/scheduler.py    # LIVE 10-min control loop — writes set
 **Deployment** (one Docker image, shadow or prod mode, run on a remote server — see `BUILD_HELP.bat`):
 
 ```bash
-docker build --no-cache -f Dockerfile.mpc -t mpc-thermal .
-docker tag mpc-thermal deadentropy/mpc-thermal:latest && docker push deadentropy/mpc-thermal:latest
-# on the server (logs land in thermal_control/logs/):
+# BUILD_HELP.bat builds and pushes two tags: :latest and :<git-sha>. The sha is
+# baked into the image as $MPC_VERSION (logged at startup) and an OCI revision label.
+docker build --no-cache -f Dockerfile.mpc --build-arg GIT_SHA=$(git describe --always --dirty) \
+  -t deadentropy/mpc-thermal:$(git describe --always --dirty) -t deadentropy/mpc-thermal:latest .
+docker push --all-tags deadentropy/mpc-thermal
+# on the server (logs land in thermal_control/logs/); MPC_TAG=<git-sha> pins a version:
 docker compose up shadow                   # shadow: log only, writes nothing, exits after 24h
 docker compose --profile prod up -d prod   # PROD: writes setpoints to the real ACs
 ```
@@ -46,6 +49,8 @@ The image's default CMD is shadow mode; the `prod` compose service overrides it 
 controller. Never run both services at once.
 
 The root `Dockerfile` is unrelated — it's the JupyterLab devcontainer image.
+
+To analyze a shadow-run log, use the `shadow-analysis` skill (`.claude/skills/shadow-analysis/`) rather than ad-hoc pandas.
 
 ## Environment / secrets
 

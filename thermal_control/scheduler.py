@@ -171,6 +171,7 @@ def run():
 
     ha.check_sensor_units(house)
     logger.info("Thermal MPC scheduler started")
+    logger.info(f"Code version  : {os.environ.get('MPC_VERSION', 'dev (not containerized)')}")
     logger.info(f"Tick interval : {control['mpc']['tick_minutes']} min")
     logger.info(f"Horizon       : {control['mpc']['horizon_steps']} steps "
                 f"({control['mpc']['horizon_steps'] * control['mpc']['tick_minutes']} min)")
