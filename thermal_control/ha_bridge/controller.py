@@ -100,6 +100,100 @@ def get_outdoor_temp(house_config):
         return None
 
 
+def get_away_mode(control_config):
+    """
+    Return True if holiday/away mode is active (item 8).
+
+    Reads the input_boolean named in control.yaml at targets.away.entity.
+    Fails safe to False (home / normal schedule) when no entity is configured
+    or the read errors — a flaky helper must never strand the house warm.
+    """
+    away   = control_config.get("targets", {}).get("away", {})
+    entity = away.get("entity")
+    if not entity:
+        return False
+    try:
+        return _get_state(entity)["state"] == "on"
+    except Exception as exc:
+        logger.warning(f"Could not read away mode {entity}: {exc} — assuming home")
+        return False
+
+
+def get_presence(house_config):
+    """
+    Return {room_id: occupied_bool} for rooms with a presence_entity (item 9).
+    'on' = occupied. Fails safe to occupied (True) on any read error or an
+    unavailable/unknown state — better to cool an empty room than to stop
+    cooling an occupied one. Rooms with no presence_entity are omitted; callers
+    treat an absent room as always occupied.
+    """
+    result = {}
+    for room in house_config["rooms"]:
+        entity = room.get("presence_entity")
+        if not entity:
+            continue
+        room_id = room["id"]
+        try:
+            val = _get_state(entity)["state"]
+            if val in ("unavailable", "unknown"):
+                logger.warning(f"Presence {entity} is {val} — assuming occupied")
+                result[room_id] = True
+            else:
+                result[room_id] = (val == "on")
+        except Exception as exc:
+            logger.warning(f"Could not read presence {entity}: {exc} — assuming occupied")
+            result[room_id] = True
+    return result
+
+
+def get_overrides(house_config):
+    """
+    Return {room_id: shift_f_int} for rooms with an override_entity (item 7).
+    The HA input_number holds the requested band shift in °F (0 = none, both
+    min and max move by this amount). Fails safe to 0 for any room whose helper
+    errors or is unavailable. Rooms with no override_entity are omitted.
+    """
+    result = {}
+    for room in house_config["rooms"]:
+        entity = room.get("override_entity")
+        if not entity:
+            continue
+        room_id = room["id"]
+        try:
+            val = _get_state(entity)["state"]
+            result[room_id] = 0 if val in ("unavailable", "unknown") else int(round(float(val)))
+        except Exception as exc:
+            logger.warning(f"Could not read override {entity}: {exc} — assuming 0")
+            result[room_id] = 0
+    return result
+
+
+def clear_override(house_config, room_id):
+    """
+    Reset a room's override input_number to 0 in HA (item 7) — called when the
+    override's duration has elapsed. Best-effort: logs and swallows failures so
+    a write error never breaks the control loop.
+    """
+    entity = next(
+        (r.get("override_entity") for r in house_config["rooms"] if r["id"] == room_id),
+        None,
+    )
+    if not entity:
+        return
+    url = f"{os.environ['HA_URL']}/api/services/input_number/set_value"
+    try:
+        r = requests.post(
+            url,
+            json={"entity_id": entity, "value": 0},
+            headers=_headers(),
+            timeout=_TIMEOUT,
+        )
+        r.raise_for_status()
+        logger.info(f"Override {room_id} ({entity}): reset to 0 (expired)")
+    except Exception as exc:
+        logger.warning(f"Could not reset override {entity}: {exc}")
+
+
 def get_ac_states(house_config):
     """
     Returns {ac_id: {hvac_mode, ac_sensor_temp_f, setpoint_f, hvac_action, ac_on}}

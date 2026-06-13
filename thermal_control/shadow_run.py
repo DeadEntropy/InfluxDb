@@ -32,7 +32,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from thermal_control.model.simulate   import HouseSimulator
 from thermal_control.control.mpc      import BangBangMPC
 from thermal_control.control.forecast import build_outdoor_series
-from thermal_control.control.schedule import resolve_targets_for_rooms, resolve_active_entry_name
+from thermal_control.control.schedule import (
+    resolve_targets_for_rooms, resolve_active_entry_name, update_override_tracker,
+)
 from thermal_control.ha_bridge        import controller as ha
 
 load_dotenv(ROOT / ".env")
@@ -110,6 +112,9 @@ def run():
     sensor_cache  = {}
     outdoor_cache = (FALLBACK_TEMP_F, datetime.min.replace(tzinfo=timezone.utc))
     tick_count    = 0
+    away_active   = False   # holiday mode (item 8); transitions are logged
+    presence_state = {}     # {room_id: occupied_bool} (item 9); transitions logged
+    override_tracker = {}   # {room_id: (shift_f, started_at)} (item 7)
 
     logger.info(f"Shadow MPC started — {SHADOW_HOURS}h run, {TICK_MINUTES}-min ticks")
     logger.info(f"Code version: {os.environ.get('MPC_VERSION', 'dev (not containerized)')}")
@@ -141,10 +146,40 @@ def run():
 
             outdoor_series, _ = build_outdoor_series(outdoor, house, control)
 
+            # Away/holiday mode (item 8) overrides the schedule when its HA
+            # toggle is on; presence (item 9) drops empty rooms to a wide band.
+            # Log transitions like the prod scheduler does.
+            away = ha.get_away_mode(control)
+            if away != away_active:
+                logger.warning(f"Away mode {'ACTIVATED' if away else 'DEACTIVATED'}")
+                away_active = away
+
+            now_dt     = datetime.now(tz=local_tz)
+            unoccupied = set()
+            overrides  = {}
+            if not away:
+                presence = ha.get_presence(house)
+                for room, occ in sorted(presence.items()):
+                    if presence_state.get(room) != occ:
+                        logger.warning(f"Presence {room}: "
+                                       f"{'occupied' if occ else 'UNOCCUPIED'}")
+                        presence_state[room] = occ
+                unoccupied = {r for r, occ in presence.items() if not occ}
+
+                # Manual overrides (item 7): track + apply, but shadow never
+                # writes to HA, so expired sliders are not reset here.
+                duration_min = control["mpc"].get("override_duration_minutes", 60)
+                overrides, events = update_override_tracker(
+                    ha.get_overrides(house), override_tracker, now_dt, duration_min
+                )
+                for room, kind, shift in events:
+                    logger.warning(f"Override {room}: {kind} ({shift:+d}°F)")
+
             # Resolve schedule and solve (no writes to HA)
-            now_dt        = datetime.now(tz=local_tz)
-            targets       = resolve_targets_for_rooms(control, sim.rooms, now_dt)
-            schedule_name = resolve_active_entry_name(control, now_dt)
+            targets       = resolve_targets_for_rooms(control, sim.rooms, now_dt,
+                                                      away=away, unoccupied=unoccupied,
+                                                      overrides=overrides)
+            schedule_name = "away" if away else resolve_active_entry_name(control, now_dt)
             mpc.solve(state, outdoor_series, missing_rooms, targets)
 
             logger.info(f"Schedule: {schedule_name}")

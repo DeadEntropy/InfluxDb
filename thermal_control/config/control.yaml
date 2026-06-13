@@ -12,6 +12,11 @@ mpc:
   # fewer ACs running when multiple combinations achieve equal comfort
   energy_weight: 0.05
 
+  # Manual short-term override (item 7): how long a non-zero HA override slider
+  # stays in effect before the scheduler resets it to 0 and the scheduled band
+  # resumes. Per-room override_entity ids are declared in house.yaml.
+  override_duration_minutes: 60
+
   # Horizon discounting — down-weight far-future steps because model error
   # accumulates over the rollout: a breach predicted at t+3h is far less
   # certain than one at t+10min. Linear from discount_start at step 1 to
@@ -35,6 +40,17 @@ targets:
     min_f: 75
     max_f: 77
 
+  # ── Away / holiday mode (item 8) ──────────────────────────────────────────
+  # When the HA toggle below is ON the house is treated as empty: every room
+  # gets its away band, overriding both the schedule and presence sensors.
+  # Fails safe — an unreadable/absent toggle is treated as "home" (normal
+  # schedule), so a flaky helper never strands the house warm.
+  away:
+    entity: input_boolean.mpc_away_mode   # HA toggle; set null/remove to disable
+    default: {min_f: 76, max_f: 80}       # rooms with no explicit entry below
+    rooms: {}                             # optional per-room overrides, e.g.
+                                          #   nicolas_office: {min_f: 76, max_f: 80}
+
   # ── Time-of-day schedule ──────────────────────────────────────────────────
   # Entries take effect at their time (24h local, America/New_York) and stay
   # active until the next entry. The list wraps midnight: the last entry
@@ -43,13 +59,18 @@ targets:
   # Priority: static per-room override (below) > schedule room > default
   # Wide band {min_f: 65, max_f: 85} = "don't care" — zero discomfort penalty
   # at any realistic indoor temperature, so the MPC ignores that room.
+  #
+  # Optional `days` field per entry: "weekday" (Mon–Fri) or "weekend" (Sat+Sun).
+  # No `days` field = applies every day. Used here to extend the sleeping block
+  # on weekends: the every-day sleeping entry stays active until the weekend
+  # daytime entry's 07:30 time, vs the weekday daytime entry's 06:00.
   schedule:
     - name: sleeping            # 22:00 → 06:00
       time: "22:00"
       rooms:
         # Bedrooms: tighter band — sleeping comfort matters more than default
-        master_bedroom: {min_f: 74, max_f: 76}
-        kids_bedroom:   {min_f: 74, max_f: 76}
+        master_bedroom: {min_f: 72, max_f: 74}
+        kids_bedroom:   {min_f: 72, max_f: 74}
         # bedroom_ac also covers anna_office — widen it so the AC isn't split
         # between sleeping people and an empty office
         anna_office:    {min_f: 65, max_f: 85}
@@ -61,13 +82,21 @@ targets:
         tv_room:        {min_f: 65, max_f: 77}
         nicolas_office: {min_f: 65, max_f: 85}
 
-    - name: daytime             # 06:00 → 15:00
+    - name: daytime             # weekdays 06:00 → 15:00
       time: "06:00"
-      rooms: 
+      days: weekday
+      rooms:
+        nicolas_office: {min_f: 74, max_f: 76}
+
+    - name: daytime             # weekends 07:30 → 15:00 (sleep in longer)
+      time: "07:30"
+      days: weekend
+      rooms:
         nicolas_office: {min_f: 74, max_f: 76}
 
     - name: early afternoon         # 15:00 → 16:30
-      time: "15:00"
+      time: "15:15"
+      days: weekday
       rooms: 
         nicolas_office: {min_f: 65, max_f: 85}
 

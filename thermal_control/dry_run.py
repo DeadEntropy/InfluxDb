@@ -10,7 +10,9 @@ Run from the repo root:
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT.parent))
@@ -22,6 +24,7 @@ import yaml
 from thermal_control.model.simulate   import HouseSimulator
 from thermal_control.control.mpc      import BangBangMPC
 from thermal_control.control.forecast import build_outdoor_series
+from thermal_control.control.schedule import resolve_targets_for_rooms
 from thermal_control.ha_bridge        import controller as ha
 
 FALLBACK_TEMP_F = 74.0
@@ -49,13 +52,31 @@ for ac_id, s in ac_states.items():
     print(f"  {ac_id:<15}  sensor={s['ac_sensor_temp_f']}°F  "
           f"setpoint={s['setpoint_f']}°F  action={s['hvac_action']}")
 
+# ── Resolve the active comfort bands (schedule + away + presence + override) ─
+# One-shot snapshot: any non-zero override slider is shown as active; the
+# duration/expiry lifecycle only runs in the live scheduler.
+now_local  = datetime.now(tz=ZoneInfo(house["location"]["timezone"]))
+away       = ha.get_away_mode(control)
+presence   = {} if away else ha.get_presence(house)
+overrides  = {} if away else {r: s for r, s in ha.get_overrides(house).items() if s}
+unoccupied = {r for r, occ in presence.items() if not occ}
+targets    = resolve_targets_for_rooms(control, sim.rooms, now_local,
+                                       away=away, unoccupied=unoccupied,
+                                       overrides=overrides)
+print(f"\nAway mode: {'ON — holiday bands' if away else 'off'}")
+if presence:
+    print("Presence: " + ", ".join(f"{r}={'occupied' if occ else 'EMPTY'}"
+                                    for r, occ in sorted(presence.items())))
+if overrides:
+    print("Overrides: " + ", ".join(f"{r}{s:+d}°F" for r, s in sorted(overrides.items())))
+
 # ── Fill missing sensors with fallback ───────────────────────────────────
 state = {}
 print("\nState passed to MPC:")
 print(f"  {'Room':<26}  {'Temp':>7}  {'Target':>12}  Source")
 print("  " + "─" * 62)
 for room_id in sim.rooms:
-    tgt = mpc.targets[room_id]
+    tgt = targets[room_id]
     target_str = f"{tgt['min_f']}–{tgt['max_f']}°F"
     if room_id in room_temps:
         state[room_id] = room_temps[room_id]
@@ -70,7 +91,7 @@ outdoor_series, outdoor_desc = build_outdoor_series(T_out, house, control)
 print(f"Outdoor series: {outdoor_desc}")
 
 # ── Solve MPC (no writes) ─────────────────────────────────────────────────
-setpoints = mpc.solve(state, outdoor_series)
+setpoints = mpc.solve(state, outdoor_series, targets=targets)
 
 print("\nOptimal setpoints (DRY RUN — nothing written to HA):")
 for ac_id, sp in setpoints.items():

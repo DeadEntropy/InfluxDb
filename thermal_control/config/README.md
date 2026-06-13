@@ -81,14 +81,27 @@ unit purely to service that room.
 
 ### Priority order (highest wins)
 
+0. **Away / holiday mode** (`targets.away`, item 8) — when the HA toggle
+   `input_boolean.mpc_away_mode` is ON, every room gets its away band,
+   overriding everything below.
+0a. **Manual override** (item 7) — a non-zero per-room `override_entity` slider
+   (in `house.yaml`) shifts the resolved band by N°F (both bounds) for
+   `mpc.override_duration_minutes`, then the scheduler resets it to 0. Beats
+   presence; yields to away mode.
+0b. **Presence** (item 9) — a room whose `presence_entity` (in `house.yaml`)
+   reports `off` drops to the wide 65–85°F "don't care" band. Beats the
+   schedule/static band but yields to away mode and a manual override.
 1. Static `targets.<room_id>` override
 2. Active schedule entry `rooms.<room_id>`
 3. `targets.default`
 
 The scheduler resolves the active entry by finding the latest `time` ≤
-current local time (wrapping midnight). `BangBangMPC.solve()` receives
-the already-resolved `{room_id: {min_f, max_f}}` dict; the MPC itself
-has no knowledge of the schedule.
+current local time (wrapping midnight). Entries may carry an optional `days`
+field (`weekday` / `weekend`; absent = every day) so e.g. the weekend sleeping
+block can run longer. `BangBangMPC.solve()` receives the already-resolved
+`{room_id: {min_f, max_f}}` dict; the MPC itself has no knowledge of the
+schedule, away mode, or presence — those are all folded into the bands by
+`resolve_targets_for_rooms()`.
 
 ## Notable facts recorded here
 

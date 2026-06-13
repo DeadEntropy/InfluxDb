@@ -46,7 +46,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from thermal_control.model.simulate      import HouseSimulator
 from thermal_control.control.mpc         import BangBangMPC
 from thermal_control.control.forecast    import build_outdoor_series
-from thermal_control.control.schedule    import resolve_targets_for_rooms
+from thermal_control.control.schedule    import resolve_targets_for_rooms, update_override_tracker
 from thermal_control.ha_bridge           import controller as ha
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -197,6 +197,9 @@ def run():
     tick_seconds = control["mpc"]["tick_minutes"] * 60
     sensor_cache = {}   # {room_id: (temp_F, datetime)}
     outdoor_cache = (FALLBACK_TEMP_F, datetime.min.replace(tzinfo=timezone.utc))
+    away_active  = False   # holiday mode (item 8); transitions are logged
+    presence_state = {}    # {room_id: occupied_bool} (item 9); transitions logged
+    override_tracker = {}  # {room_id: (shift_f, started_at)} (item 7)
 
     # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
     # except-Exception block and hits the outer finally → safe setpoints written.
@@ -260,8 +263,50 @@ def run():
                 )
                 logger.info(f"Outdoor series: {outdoor_desc}")
 
-                # 6. Resolve schedule and solve MPC
-                targets = resolve_targets_for_rooms(control, sim.rooms, datetime.now(tz=local_tz))
+                # 6. Resolve schedule and solve MPC. Away/holiday mode (item 8)
+                #    overrides the schedule with an energy-saving band for every
+                #    room; presence (item 9) drops empty rooms to a wide band.
+                #    Both override the schedule; away wins over presence. State
+                #    transitions are logged so they show up in the history.
+                away = ha.get_away_mode(control)
+                if away != away_active:
+                    logger.warning(f"Away mode {'ACTIVATED' if away else 'DEACTIVATED'}")
+                    away_active = away
+
+                now_dt     = datetime.now(tz=local_tz)
+                unoccupied = set()
+                overrides  = {}
+                if away:
+                    logger.info("Away mode active — using holiday bands")
+                else:
+                    presence = ha.get_presence(house)
+                    for room, occ in sorted(presence.items()):
+                        if presence_state.get(room) != occ:
+                            logger.warning(f"Presence {room}: "
+                                           f"{'occupied' if occ else 'UNOCCUPIED'}")
+                            presence_state[room] = occ
+                    unoccupied = {r for r, occ in presence.items() if not occ}
+                    if unoccupied:
+                        logger.info(f"Unoccupied (MPC ignoring): {', '.join(sorted(unoccupied))}")
+
+                    # Manual short-term overrides (item 7): apply within their
+                    # duration window, reset the HA slider to 0 once expired.
+                    duration_min = control["mpc"].get("override_duration_minutes", 60)
+                    overrides, events = update_override_tracker(
+                        ha.get_overrides(house), override_tracker, now_dt, duration_min
+                    )
+                    for room, kind, shift in events:
+                        logger.warning(f"Override {room}: {kind} ({shift:+d}°F)")
+                        if kind == "expired":
+                            ha.clear_override(house, room)
+                    if overrides:
+                        logger.info("Active overrides: "
+                                    + ", ".join(f"{r}{s:+d}°F" for r, s in sorted(overrides.items())))
+
+                targets = resolve_targets_for_rooms(
+                    control, sim.rooms, now_dt,
+                    away=away, unoccupied=unoccupied, overrides=overrides,
+                )
                 setpoints = mpc.solve(state, outdoor_series, missing_rooms, targets)
                 logger.info(mpc.explain())
 

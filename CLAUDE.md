@@ -13,7 +13,9 @@ Two related projects in one repo:
 
 ## Commands
 
-There are no tests and no linter configured. Python 3.11, plain scripts (no package install; `sys.path` manipulation at the top of entry points makes `thermal_control.*` imports work).
+No linter is configured. Python 3.11, plain scripts (no package install; `sys.path` manipulation at the top of entry points makes `thermal_control.*` imports work).
+
+Tests live in `thermal_control/tests/` (pytest). Run from the repo root with `python -m pytest` (config in `pytest.ini`). The suite is hermetic — no network or live Home Assistant: HTTP-touching code (`ha_bridge/controller.py`, `control/forecast.py`) is exercised by monkeypatching `requests`/`_get_state`, while `simulate`/`mpc` are tested against the real `model/weights/` and `config/`.
 
 **Always run from the repo root** (`/workspaces/InfluxDb`):
 

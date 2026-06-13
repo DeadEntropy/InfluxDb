@@ -5,12 +5,17 @@ rooms:
     sensor_entity: sensor.master_bedroom_temperature
     csv_column: "Master Bedroom Temperature"
     exterior_walls: true
+    # Manual short-term override (item 7): HA input_number holding a °F band
+    # shift (0 = none). Applied for control.mpc.override_duration_minutes, then
+    # the scheduler resets it to 0.
+    override_entity: input_number.mpc_override_master_bedroom
 
   # sensor data source column: "Kids Bedroom Temperature"
   - id: kids_bedroom
     sensor_entity: sensor.kids_bedroom_temperature
     csv_column: "Kids Bedroom Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_kids_bedroom
 
   # NO sensor in extracted data — excluded from DAG targets; covered by bedroom_ac
   - id: kids_playroom
@@ -24,6 +29,7 @@ rooms:
     sensor_entity: sensor.anna_office_temperature
     csv_column: "Anna Office Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_anna_office
 
   # master_bath excluded: shower activity causes large temperature spikes
   # that would corrupt the thermal model; not a comfort target anyway.
@@ -49,6 +55,7 @@ rooms:
     sensor_entity: sensor.dining_room_temperature
     csv_column: "Dining Room Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_dining_room
 
   # NO sensor in extracted data
   - id: entrance
@@ -63,12 +70,14 @@ rooms:
     sensor_entity: sensor.kitchen_temperature
     csv_column: "Kitchen Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_kitchen
 
   # sensor data source column: "Family Room Temperature"
   - id: family_room
     sensor_entity: sensor.family_room_temperature
     csv_column: "Family Room Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_family_room
 
   # ── Extension zone ────────────────────────────────────────────────────────
   # sensor data source column: "Tv Room Temperature"
@@ -77,12 +86,18 @@ rooms:
     sensor_entity: sensor.tv_room_temperature
     csv_column: "Tv Room Temperature"
     exterior_walls: true
+    override_entity: input_number.mpc_override_tv_room
 
   # sensor data source column: "Nicolas Office Temperature"
   - id: nicolas_office
     sensor_entity: sensor.nicolas_office_temperature
     csv_column: "Nicolas Office Temperature"
     exterior_walls: true
+    # Presence proxy (item 9): on = occupied. When off, the MPC drops this room
+    # to the wide 65–85°F "don't care" band so an empty office isn't cooled.
+    # Rooms without presence_entity are always treated as occupied.
+    presence_entity: binary_sensor.presence_nicolas_office
+    override_entity: input_number.mpc_override_nicolas_office
 
   # NO sensor in extracted data
   - id: nicolas_bath
