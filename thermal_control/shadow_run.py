@@ -33,7 +33,7 @@ from thermal_control.model.simulate   import HouseSimulator
 from thermal_control.control.mpc      import BangBangMPC
 from thermal_control.control.forecast import build_outdoor_series
 from thermal_control.control.schedule import (
-    resolve_targets_for_rooms, resolve_active_entry_name, update_override_tracker,
+    resolve_targets_for_rooms, resolve_active_entry_name,
 )
 from thermal_control.ha_bridge        import controller as ha
 
@@ -114,7 +114,6 @@ def run():
     tick_count    = 0
     away_active   = False   # holiday mode (item 8); transitions are logged
     presence_state = {}     # {room_id: occupied_bool} (item 9); transitions logged
-    override_tracker = {}   # {room_id: (shift_f, started_at)} (item 7)
 
     logger.info(f"Shadow MPC started — {SHADOW_HOURS}h run, {TICK_MINUTES}-min ticks")
     logger.info(f"Code version: {os.environ.get('MPC_VERSION', 'dev (not containerized)')}")
@@ -166,19 +165,23 @@ def run():
                         presence_state[room] = occ
                 unoccupied = {r for r, occ in presence.items() if not occ}
 
-                # Manual overrides (item 7): track + apply, but shadow never
-                # writes to HA, so expired sliders are not reset here.
-                duration_min = control["mpc"].get("override_duration_minutes", 60)
-                overrides, events = update_override_tracker(
-                    ha.get_overrides(house), override_tracker, now_dt, duration_min
-                )
-                for room, kind, shift in events:
-                    logger.warning(f"Override {room}: {kind} ({shift:+d}°F)")
+                # Manual overrides (item 7b): shadow never writes, so it can't
+                # sync/revert the cards — instead it treats any card whose target
+                # differs from the scheduled upper bound as an active override
+                # (stateless, no duration/expiry).
+                scheduled = resolve_targets_for_rooms(control, sim.rooms, now_dt)
+                raw_targets = ha.get_room_targets(house)
+                for room, target in raw_targets.items():
+                    if target != scheduled[room]["max_f"]:
+                        overrides[room] = target
+                if overrides:
+                    logger.info("Active overrides (card ≠ schedule): "
+                                + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))
 
             # Resolve schedule and solve (no writes to HA)
             targets       = resolve_targets_for_rooms(control, sim.rooms, now_dt,
                                                       away=away, unoccupied=unoccupied,
-                                                      overrides=overrides)
+                                                      override_targets=overrides)
             schedule_name = "away" if away else resolve_active_entry_name(control, now_dt)
             mpc.solve(state, outdoor_series, missing_rooms, targets)
 

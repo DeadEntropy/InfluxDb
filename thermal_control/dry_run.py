@@ -53,22 +53,27 @@ for ac_id, s in ac_states.items():
           f"setpoint={s['setpoint_f']}°F  action={s['hvac_action']}")
 
 # ── Resolve the active comfort bands (schedule + away + presence + override) ─
-# One-shot snapshot: any non-zero override slider is shown as active; the
-# duration/expiry lifecycle only runs in the live scheduler.
+# One-shot snapshot: any thermostat card whose target differs from the scheduled
+# upper bound is shown as an active override; the duration/expiry lifecycle and
+# the card write-back only run in the live scheduler.
 now_local  = datetime.now(tz=ZoneInfo(house["location"]["timezone"]))
 away       = ha.get_away_mode(control)
 presence   = {} if away else ha.get_presence(house)
-overrides  = {} if away else {r: s for r, s in ha.get_overrides(house).items() if s}
 unoccupied = {r for r, occ in presence.items() if not occ}
+overrides  = {}
+if not away:
+    scheduled = resolve_targets_for_rooms(control, sim.rooms, now_local)
+    overrides = {r: t for r, t in ha.get_room_targets(house).items()
+                 if t != scheduled[r]["max_f"]}
 targets    = resolve_targets_for_rooms(control, sim.rooms, now_local,
                                        away=away, unoccupied=unoccupied,
-                                       overrides=overrides)
+                                       override_targets=overrides)
 print(f"\nAway mode: {'ON — holiday bands' if away else 'off'}")
 if presence:
     print("Presence: " + ", ".join(f"{r}={'occupied' if occ else 'EMPTY'}"
                                     for r, occ in sorted(presence.items())))
 if overrides:
-    print("Overrides: " + ", ".join(f"{r}{s:+d}°F" for r, s in sorted(overrides.items())))
+    print("Overrides: " + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))
 
 # ── Fill missing sensors with fallback ───────────────────────────────────
 state = {}

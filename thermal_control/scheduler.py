@@ -133,6 +133,90 @@ def _maybe_reload(known_mtimes):
         return None
 
 
+def _input_signature(house, control):
+    """
+    Cheap snapshot of the user-controllable inputs the HA app changes — the
+    per-room thermostat targets (items 7/7b) and the away toggle (item 8).
+    Compared during the inter-tick sleep so the loop can wake early when the user
+    drags a card instead of waiting up to a full tick. The baseline is captured
+    at the end of a tick (after the scheduler's own write-backs), so a steady
+    state reads stable and only a real user edit trips it. Fails safe so a
+    transient HA glitch at most causes one harmless extra tick.
+    """
+    try:
+        targets = ha.get_room_targets(house)
+    except Exception:
+        targets = {}
+    return (tuple(sorted(targets.items())), ha.get_away_mode(control))
+
+
+def _responsive_sleep(sleep_s, poll_s, house, control, baseline):
+    """
+    Sleep up to sleep_s, waking early (within poll_s) if a user input changes
+    vs `baseline`. Returns True when woken early by a change, False on timeout.
+    """
+    deadline = time.monotonic() + sleep_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(poll_s, remaining))
+        if time.monotonic() >= deadline:
+            return False
+        if _input_signature(house, control) != baseline:
+            return True
+
+
+def _plan_card_detection(raw_targets, display_target, card_synced, away):
+    """
+    Reconcile per-room thermostat cards (item 7b) against what the scheduler last
+    wrote (``card_synced``) and detect user edits. Pure: returns the writes/edits
+    to act on; the caller performs the HA writes and updates ``card_synced``.
+
+      raw_targets    : {room: target_f} read from the cards this tick (absent =
+                       unavailable).
+      display_target : {room: upper_bound_f} the card should show — the away band
+                       max when away, else the scheduled band max.
+      card_synced    : {room: last_value_the_scheduler_wrote}; room absent = card
+                       not yet seeded.
+
+    Returns (detected, writes):
+      detected : {room: target_f} home-mode user edits (candidate overrides).
+      writes   : {room: target_f} cards to (re)write now — first-tick seeding and
+                 away-mode pinning (away beats override, so edits are ignored and
+                 the card is held on the away target).
+    """
+    detected, writes = {}, {}
+    for room, S in display_target.items():
+        T    = raw_targets.get(room)
+        last = card_synced.get(room)
+        if last is None:                       # first sight → seed to schedule/away
+            writes[room] = S
+        elif away:                             # away pins the card; ignore edits
+            if T != S:
+                writes[room] = S
+        elif T is not None and T != last:      # user dragged the card → override
+            detected[room] = T
+    return detected, writes
+
+
+def _plan_card_revert(raw_targets, display_target, card_synced, effective):
+    """
+    Home-mode follow-up to _plan_card_detection: keep cards for rooms *not* under
+    an active override pinned to the schedule — resyncing on a schedule
+    transition and reverting on override expiry/cancel. Returns {room: target_f}
+    writes to apply (caller updates ``card_synced``).
+    """
+    writes = {}
+    for room, S in display_target.items():
+        if room in effective:                  # leave the user's value showing
+            continue
+        T = raw_targets.get(room)
+        if card_synced.get(room) != S or (T is not None and T != S):
+            writes[room] = S
+    return writes
+
+
 def fill_missing(current_temps, cache, rooms, fallback_f):
     """
     For rooms missing from current_temps, use cached value (if fresh)
@@ -199,7 +283,8 @@ def run():
     outdoor_cache = (FALLBACK_TEMP_F, datetime.min.replace(tzinfo=timezone.utc))
     away_active  = False   # holiday mode (item 8); transitions are logged
     presence_state = {}    # {room_id: occupied_bool} (item 9); transitions logged
-    override_tracker = {}  # {room_id: (shift_f, started_at)} (item 7)
+    override_tracker = {}  # {room_id: (target_f, started_at)} (items 7/7b)
+    card_synced  = {}      # {room_id: last target the scheduler wrote} (item 7b)
 
     # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
     # except-Exception block and hits the outer finally → safe setpoints written.
@@ -276,8 +361,25 @@ def run():
                 now_dt     = datetime.now(tz=local_tz)
                 unoccupied = set()
                 overrides  = {}
+
+                # 6a. Thermostat cards (item 7b). Each card shows an upper-bound
+                #     target: the away band max when away, else the scheduled max.
+                #     The scheduler keeps the card synced to that and reads it back
+                #     to detect user edits (a value ≠ what it last wrote).
+                display_bands  = resolve_targets_for_rooms(control, sim.rooms, now_dt, away=away)
+                display_target = {r["id"]: display_bands[r["id"]]["max_f"]
+                                  for r in house["rooms"] if r.get("thermostat_entity")}
+                raw_targets    = ha.get_room_targets(house)
+                detected, writes = _plan_card_detection(
+                    raw_targets, display_target, card_synced, away
+                )
+                for room, val in writes.items():
+                    ha.set_room_target(house, room, val)
+                    card_synced[room] = val
+
                 if away:
                     logger.info("Away mode active — using holiday bands")
+                    override_tracker.clear()   # away beats override; drop any tracked
                 else:
                     presence = ha.get_presence(house)
                     for room, occ in sorted(presence.items()):
@@ -289,23 +391,30 @@ def run():
                     if unoccupied:
                         logger.info(f"Unoccupied (MPC ignoring): {', '.join(sorted(unoccupied))}")
 
-                    # Manual short-term overrides (item 7): apply within their
-                    # duration window, reset the HA slider to 0 once expired.
+                    # Manual overrides (items 7/7b): a card edited away from the
+                    # schedule holds for override_duration_minutes, then reverts.
                     duration_min = control["mpc"].get("override_duration_minutes", 60)
                     overrides, events = update_override_tracker(
-                        ha.get_overrides(house), override_tracker, now_dt, duration_min
+                        detected, override_tracker, now_dt, duration_min
                     )
-                    for room, kind, shift in events:
-                        logger.warning(f"Override {room}: {kind} ({shift:+d}°F)")
-                        if kind == "expired":
-                            ha.clear_override(house, room)
+                    for room, kind, target in events:
+                        logger.warning(f"Override {room}: {kind} (→ {target}°F)")
                     if overrides:
                         logger.info("Active overrides: "
-                                    + ", ".join(f"{r}{s:+d}°F" for r, s in sorted(overrides.items())))
+                                    + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))
+
+                    # Resync/revert cards not under an active override (schedule
+                    # transition, or override just expired/cancelled).
+                    revert = _plan_card_revert(
+                        raw_targets, display_target, card_synced, overrides
+                    )
+                    for room, val in revert.items():
+                        ha.set_room_target(house, room, val)
+                        card_synced[room] = val
 
                 targets = resolve_targets_for_rooms(
                     control, sim.rooms, now_dt,
-                    away=away, unoccupied=unoccupied, overrides=overrides,
+                    away=away, unoccupied=unoccupied, override_targets=overrides,
                 )
                 setpoints = mpc.solve(state, outdoor_series, missing_rooms, targets)
                 logger.info(mpc.explain())
@@ -343,11 +452,17 @@ def run():
             except Exception as exc:
                 logger.error(f"Tick failed: {exc}", exc_info=True)
 
-            # Sleep for the remainder of the tick interval
+            # Sleep for the remainder of the tick interval, but poll the app's
+            # override sliders / away toggle while sleeping and wake early when
+            # one changes so a target edit takes effect in seconds, not minutes.
             elapsed = time.monotonic() - tick_start
             sleep_s = max(0, tick_seconds - elapsed)
-            logger.info(f"Tick done in {elapsed:.1f}s, sleeping {sleep_s:.0f}s")
-            time.sleep(sleep_s)
+            poll_s  = max(5, control["mpc"].get("poll_seconds", 20))
+            logger.info(f"Tick done in {elapsed:.1f}s, sleeping {sleep_s:.0f}s "
+                        f"(polling app targets every {poll_s}s)")
+            baseline = _input_signature(house, control)
+            if _responsive_sleep(sleep_s, poll_s, house, control, baseline):
+                logger.info("App target changed — waking early to re-solve")
 
     except (KeyboardInterrupt, SystemExit):
         logger.info("Shutdown signal received")

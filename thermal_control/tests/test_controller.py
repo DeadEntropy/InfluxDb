@@ -83,29 +83,31 @@ def test_get_presence_failsafe_occupied(monkeypatch, house_config):
     assert ha.get_presence(house_config) == {"nicolas_office": True}
 
 
-# ── get_overrides ───────────────────────────────────────────────────────────
-def test_get_overrides(monkeypatch, house_config):
-    ent = "input_number.mpc_override_kitchen"
-    # only configure kitchen, leave others to error → fail-safe 0
-    states = {r.get("override_entity"): {"state": "0"}
-              for r in house_config["rooms"] if r.get("override_entity")}
-    states[ent] = {"state": "3.0"}
+# ── get_room_targets ──────────────────────────────────────────────────────
+def test_get_room_targets(monkeypatch, house_config):
+    ent = "climate.mpc_kitchen"
+    # kitchen has a real target; an unavailable card is skipped; others error out
+    states = {r.get("thermostat_entity"): {"state": "cool", "attributes": {"temperature": 77}}
+              for r in house_config["rooms"] if r.get("thermostat_entity")}
+    states[ent] = {"state": "cool", "attributes": {"temperature": "78.0"}}
+    states["climate.mpc_tv_room"] = {"state": "unavailable", "attributes": {}}
     monkeypatch.setattr(ha, "_get_state", make_get_state(states))
-    overrides = ha.get_overrides(house_config)
-    assert overrides["kitchen"] == 3       # rounded int
-    assert all(isinstance(v, int) for v in overrides.values())
+    targets = ha.get_room_targets(house_config)
+    assert targets["kitchen"] == 78          # rounded int from attributes.temperature
+    assert "tv_room" not in targets          # unavailable card omitted
+    assert all(isinstance(v, int) for v in targets.values())
 
 
-# ── clear_override ──────────────────────────────────────────────────────────
-def test_clear_override_posts_zero(monkeypatch, house_config):
+# ── set_room_target ─────────────────────────────────────────────────────────
+def test_set_room_target_posts_set_temperature(monkeypatch, house_config):
     calls = []
     monkeypatch.setattr(ha.requests, "post",
                         lambda url, **kw: calls.append((url, kw)) or _ok())
-    ha.clear_override(house_config, "kitchen")
+    ha.set_room_target(house_config, "kitchen", 79)
     assert len(calls) == 1
     url, kw = calls[0]
-    assert url.endswith("/api/services/input_number/set_value")
-    assert kw["json"] == {"entity_id": "input_number.mpc_override_kitchen", "value": 0}
+    assert url.endswith("/api/services/climate/set_temperature")
+    assert kw["json"] == {"entity_id": "climate.mpc_kitchen", "temperature": 79}
 
 
 # ── get_ac_states ───────────────────────────────────────────────────────────

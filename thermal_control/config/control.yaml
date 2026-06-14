@@ -2,6 +2,12 @@ mpc:
   horizon_steps: 18          # look-ahead window (18 × 10 min = 3 hours)
   tick_minutes: 10           # how often the MPC runs
 
+  # Between ticks the loop polls the user-controllable inputs (override sliders
+  # + away toggle — what the HA app changes) this often and wakes early to
+  # re-solve the moment one changes, so app edits take effect in seconds instead
+  # of waiting up to a full tick. Each poll is a few cheap REST reads.
+  poll_seconds: 20
+
   # Bang-bang setpoint values (°F)
   # Force ON : setpoint set below any realistic indoor temperature
   # Force OFF: setpoint set above any realistic indoor temperature
@@ -47,9 +53,9 @@ targets:
   # schedule), so a flaky helper never strands the house warm.
   away:
     entity: input_boolean.mpc_away_mode   # HA toggle; set null/remove to disable
-    default: {min_f: 76, max_f: 80}       # rooms with no explicit entry below
+    default: {min_f: 76, max_f: 78}       # rooms with no explicit entry below
     rooms: {}                             # optional per-room overrides, e.g.
-                                          #   nicolas_office: {min_f: 76, max_f: 80}
+                                          #   nicolas_office: {min_f: 76, max_f: 78}
 
   # ── Time-of-day schedule ──────────────────────────────────────────────────
   # Entries take effect at their time (24h local, America/New_York) and stay

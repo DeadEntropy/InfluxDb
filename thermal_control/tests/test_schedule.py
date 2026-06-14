@@ -72,7 +72,7 @@ def test_resolve_active_entry_name(control_config):
 def test_away_targets_uses_away_band(control_config):
     rooms = ["kitchen", "nicolas_office"]
     away = sch.away_targets(control_config, rooms)
-    assert away == {r: {"min_f": 76, "max_f": 80} for r in rooms}
+    assert away == {r: {"min_f": 76, "max_f": 78} for r in rooms}
 
 
 def test_away_targets_fallback_when_block_absent():
@@ -86,14 +86,15 @@ def test_resolve_for_rooms_priority_chain(control_config):
 
     # away beats everything
     assert sch.resolve_targets_for_rooms(control_config, rooms, MONDAY,
-                                         away=True)["nicolas_office"] == {"min_f": 76, "max_f": 80}
+                                         away=True)["nicolas_office"] == {"min_f": 76, "max_f": 78}
 
-    # manual override shifts both bounds and beats presence (unoccupied)
+    # manual override sets the upper bound, lower bound follows at the scheduled
+    # width, and it beats presence (unoccupied)
     shifted = sch.resolve_targets_for_rooms(
         control_config, rooms, MONDAY,
-        overrides={"nicolas_office": 2}, unoccupied={"nicolas_office"},
+        override_targets={"nicolas_office": 78}, unoccupied={"nicolas_office"},
     )["nicolas_office"]
-    assert shifted == {"min_f": 76, "max_f": 78}      # 74–76 shifted +2; not WIDE_BAND
+    assert shifted == {"min_f": 76, "max_f": 78}      # 74–76 (width 2) → max 78, min 76
 
     # unoccupied with no override → wide "don't care" band (NEXT_STEPS item 9)
     empty = sch.resolve_targets_for_rooms(
@@ -102,31 +103,37 @@ def test_resolve_for_rooms_priority_chain(control_config):
     assert empty == sch.WIDE_BAND
 
 
-# ── update_override_tracker (NEXT_STEPS item 7) ─────────────────────────────
+# ── update_override_tracker (NEXT_STEPS items 7/7b) ─────────────────────────
 def test_override_tracker_activate_change_expire_cancel():
     now = datetime(2026, 6, 15, 12, 0)
     tracker = {}
 
-    # activate
-    eff, events = sch.update_override_tracker({"kitchen": 2}, tracker, now, duration_min=60)
-    assert eff == {"kitchen": 2}
-    assert ("kitchen", "activated", 2) in events
+    # activate (target = the absolute upper bound the user set)
+    eff, events = sch.update_override_tracker({"kitchen": 78}, tracker, now, duration_min=60)
+    assert eff == {"kitchen": 78}
+    assert ("kitchen", "activated", 78) in events
 
-    # changed value restarts the timer
+    # changed target restarts the timer
     later = now + timedelta(minutes=30)
-    eff, events = sch.update_override_tracker({"kitchen": 3}, tracker, later, 60)
-    assert eff == {"kitchen": 3}
-    assert ("kitchen", "changed", 3) in events
+    eff, events = sch.update_override_tracker({"kitchen": 79}, tracker, later, 60)
+    assert eff == {"kitchen": 79}
+    assert ("kitchen", "changed", 79) in events
+
+    # re-passing the SAME target (e.g. unchanged across a schedule transition)
+    # does NOT restart the timer
+    eff, events = sch.update_override_tracker({"kitchen": 79}, tracker, later + timedelta(minutes=10), 60)
+    assert eff == {"kitchen": 79}
+    assert events == []
 
     # expiry: now is >= duration past the (restarted) start
     expired_at = later + timedelta(minutes=60)
-    eff, events = sch.update_override_tracker({"kitchen": 3}, tracker, expired_at, 60)
+    eff, events = sch.update_override_tracker({"kitchen": 79}, tracker, expired_at, 60)
     assert eff == {}
-    assert ("kitchen", "expired", 3) in events
+    assert ("kitchen", "expired", 79) in events
     assert "kitchen" not in tracker
 
-    # cancel: a tracked slider set back to 0 before expiry
-    tracker = {"kitchen": (2, now)}
-    eff, events = sch.update_override_tracker({"kitchen": 0}, tracker, now, 60)
+    # cancel: a tracked card no longer being edited (returned to schedule) → absent
+    tracker = {"kitchen": (78, now)}
+    eff, events = sch.update_override_tracker({}, tracker, now, 60)
     assert eff == {}
-    assert ("kitchen", "cancelled", 2) in events
+    assert ("kitchen", "cancelled", 78) in events

@@ -146,52 +146,61 @@ def get_presence(house_config):
     return result
 
 
-def get_overrides(house_config):
+def get_room_targets(house_config):
     """
-    Return {room_id: shift_f_int} for rooms with an override_entity (item 7).
-    The HA input_number holds the requested band shift in °F (0 = none, both
-    min and max move by this amount). Fails safe to 0 for any room whose helper
-    errors or is unavailable. Rooms with no override_entity are omitted.
+    Return {room_id: target_f_int} read from each room's thermostat_entity
+    (items 7/7b). The climate entity's target temperature is the user-facing
+    UPPER bound of the comfort band. Rooms whose card is unavailable/unknown,
+    has no target, or errors are omitted — the caller treats an absent room as
+    "no reading" (follow schedule). Rooms with no thermostat_entity are omitted.
     """
     result = {}
     for room in house_config["rooms"]:
-        entity = room.get("override_entity")
+        entity = room.get("thermostat_entity")
         if not entity:
             continue
         room_id = room["id"]
         try:
-            val = _get_state(entity)["state"]
-            result[room_id] = 0 if val in ("unavailable", "unknown") else int(round(float(val)))
+            s = _get_state(entity)
+            if s["state"] in ("unavailable", "unknown"):
+                logger.warning(f"Thermostat {entity} is {s['state']} — skipped")
+                continue
+            temp = s.get("attributes", {}).get("temperature")
+            if temp is None:
+                logger.warning(f"Thermostat {entity} has no target temperature — skipped")
+                continue
+            result[room_id] = int(round(float(temp)))
         except Exception as exc:
-            logger.warning(f"Could not read override {entity}: {exc} — assuming 0")
-            result[room_id] = 0
+            logger.warning(f"Could not read thermostat {entity}: {exc}")
     return result
 
 
-def clear_override(house_config, room_id):
+def set_room_target(house_config, room_id, temp_f):
     """
-    Reset a room's override input_number to 0 in HA (item 7) — called when the
-    override's duration has elapsed. Best-effort: logs and swallows failures so
-    a write error never breaks the control loop.
+    Write an integer target temperature (°F) to a room's thermostat_entity via
+    climate.set_temperature (items 7/7b). Used both to keep the card synced to
+    the active schedule band and to revert it to the schedule when a user
+    override expires. Best-effort: logs and swallows failures so a write error
+    never breaks the control loop.
     """
     entity = next(
-        (r.get("override_entity") for r in house_config["rooms"] if r["id"] == room_id),
+        (r.get("thermostat_entity") for r in house_config["rooms"] if r["id"] == room_id),
         None,
     )
     if not entity:
         return
-    url = f"{os.environ['HA_URL']}/api/services/input_number/set_value"
+    url = f"{os.environ['HA_URL']}/api/services/climate/set_temperature"
     try:
         r = requests.post(
             url,
-            json={"entity_id": entity, "value": 0},
+            json={"entity_id": entity, "temperature": int(temp_f)},
             headers=_headers(),
             timeout=_TIMEOUT,
         )
         r.raise_for_status()
-        logger.info(f"Override {room_id} ({entity}): reset to 0 (expired)")
+        logger.info(f"Thermostat {room_id} ({entity}): target → {int(temp_f)}°F")
     except Exception as exc:
-        logger.warning(f"Could not reset override {entity}: {exc}")
+        logger.warning(f"Could not set thermostat {entity}: {exc}")
 
 
 def get_ac_states(house_config):

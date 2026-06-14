@@ -8,11 +8,13 @@ Priority (highest wins):
                                  ON: substitutes the away band for every room,
                                  overriding everything below (handled by the
                                  caller passing away=True to resolve_*_for_rooms)
-  0a. Manual override (item 7) — a non-zero per-room HA slider shifts the
-                                 resolved band by N°F (both bounds). Beats
-                                 presence (an explicit request means condition
-                                 the room) but yields to away mode (caller passes
-                                 overrides=); expiry handled by the scheduler.
+  0a. Manual override (items 7/7b) — a per-room thermostat target sets the band's
+                                 UPPER bound to the user's value, with the lower
+                                 bound following at the scheduled width (caller
+                                 passes override_targets=). Beats presence (an
+                                 explicit request means condition the room) but
+                                 yields to away mode; expiry handled by the
+                                 scheduler.
   0b. Presence (unoccupied)    — item 9: a room reported empty by its presence
                                  sensor drops to the wide 65–85°F "don't care"
                                  band, overriding the schedule/static below but
@@ -133,19 +135,23 @@ def away_targets(control_cfg: dict, rooms: list) -> dict:
 
 def resolve_targets_for_rooms(control_cfg: dict, rooms: list, now: datetime,
                               away: bool = False, unoccupied=None,
-                              overrides=None) -> dict:
+                              override_targets=None) -> dict:
     """
     Like resolve_targets() but guaranteed to cover exactly `rooms`.
     Rooms not mentioned anywhere in the config get the default band.
 
-    away       : when True, holiday mode (item 8) overrides everything and every
-                 room gets its away band instead (presence/overrides ignored).
-    unoccupied : set of room_ids reported empty by their presence sensor (item 9);
-                 each drops to the wide 65–85°F "don't care" band. Yields to a
-                 manual override and to away mode.
-    overrides  : {room_id: shift_f} active manual overrides (item 7); shifts both
-                 bounds of the resolved band by shift_f. Beats presence; ignored
-                 when away is True. Duration/expiry is handled by the caller.
+    away             : when True, holiday mode (item 8) overrides everything and
+                       every room gets its away band instead (presence/overrides
+                       ignored).
+    unoccupied       : set of room_ids reported empty by their presence sensor
+                       (item 9); each drops to the wide 65–85°F "don't care" band.
+                       Yields to a manual override and to away mode.
+    override_targets : {room_id: target_f} active manual overrides (items 7/7b).
+                       `target_f` is the desired UPPER bound; the band becomes
+                       {max_f: target_f, min_f: target_f − W} where W is the
+                       room's scheduled band width, so the width is preserved.
+                       Beats presence; ignored when away is True. Duration/expiry
+                       is handled by the caller.
     """
     if away:
         return away_targets(control_cfg, rooms)
@@ -153,61 +159,68 @@ def resolve_targets_for_rooms(control_cfg: dict, rooms: list, now: datetime,
     default    = control_cfg["targets"]["default"]
     targets    = {room: resolved.get(room, dict(default)) for room in rooms}
     unoccupied = unoccupied or set()
-    overrides  = overrides or {}
+    override_targets = override_targets or {}
     for room in rooms:
-        shift = overrides.get(room, 0)
-        if shift:
+        target = override_targets.get(room)
+        if target is not None:
             b = targets[room]
-            targets[room] = {"min_f": b["min_f"] + shift, "max_f": b["max_f"] + shift}
+            width = b["max_f"] - b["min_f"]
+            targets[room] = {"min_f": target - width, "max_f": target}
         elif room in unoccupied:
             targets[room] = dict(WIDE_BAND)
     return targets
 
 
-def update_override_tracker(raw_overrides: dict, tracker: dict,
+def update_override_tracker(raw_targets: dict, tracker: dict,
                             now: datetime, duration_min: float):
     """
-    Drive the manual-override lifecycle (item 7).
+    Drive the manual-override lifecycle (items 7/7b).
 
-    raw_overrides : {room_id: shift_f} read from HA this tick (0 = no override).
-    tracker       : mutable {room_id: (shift_f, started_at)} carried across ticks.
-    now           : current datetime (tz-aware, matching started_at).
-    duration_min  : minutes a non-zero shift stays active before it expires.
+    raw_targets  : {room_id: target_f} for rooms with a *detected* user edit this
+                   tick (the absolute upper-bound target the user set). Rooms with
+                   no active edit are simply absent from the dict.
+    tracker      : mutable {room_id: (target_f, started_at)} carried across ticks.
+    now          : current datetime (tz-aware, matching started_at).
+    duration_min : minutes a target stays active before it expires.
 
     Returns (effective, events):
-      effective : {room_id: shift_f} overrides still within their window — pass
-                  to resolve_targets_for_rooms(overrides=...).
-      events    : list of (room_id, kind, shift) for logging, kind ∈
+      effective : {room_id: target_f} overrides still within their window — pass
+                  to resolve_targets_for_rooms(override_targets=...).
+      events    : list of (room_id, kind, target_f) for logging, kind ∈
                   {"activated","changed","expired","cancelled"}. The caller
-                  resets the HA helper to 0 for "expired" rooms (live mode only).
+                  reverts the card to the schedule for "expired"/"cancelled"
+                  rooms (live mode only).
 
-    A changed shift restarts the timer. "cancelled" fires when a tracked room's
-    slider was set back to 0 by the user before expiry.
+    The tracker keys on the absolute target (not a derived shift) so a schedule
+    transition mid-window does not restart the timer. A changed target restarts
+    it. "cancelled" fires when a tracked room is no longer being edited (its card
+    was returned to the scheduled value) before expiry.
     """
     duration  = timedelta(minutes=duration_min)
     effective = {}
     events    = []
     seen      = set()
 
-    for room, shift in raw_overrides.items():
-        if not shift:
+    for room, target in raw_targets.items():
+        if target is None:
             continue
         seen.add(room)
         prev = tracker.get(room)
         if prev is None:
-            tracker[room] = (shift, now)
-            events.append((room, "activated", shift))
-        elif prev[0] != shift:
-            tracker[room] = (shift, now)
-            events.append((room, "changed", shift))
+            tracker[room] = (target, now)
+            events.append((room, "activated", target))
+        elif prev[0] != target:
+            tracker[room] = (target, now)
+            events.append((room, "changed", target))
 
         if now - tracker[room][1] >= duration:
-            events.append((room, "expired", shift))
+            events.append((room, "expired", target))
             del tracker[room]
         else:
-            effective[room] = shift
+            effective[room] = target
 
-    # A tracked override whose slider is now 0 (or unreadable) was cancelled.
+    # A tracked override no longer being edited (card returned to schedule) was
+    # cancelled.
     for room in list(tracker):
         if room not in seen:
             events.append((room, "cancelled", tracker[room][0]))

@@ -187,6 +187,189 @@ the precedence is now away > override > presence > static > schedule > default.
 
 ---
 
+## 7b. Thermostat-Card UI for the Manual Override
+
+Replace the per-room override **slider** (item 7: an `input_number` holding a relative °F
+shift) with a per-room **thermostat card** in the HA app. The card shows the room's current
+temperature and a single target temperature; that target is the **upper bound** (`max_f`) of
+the comfort band, and the **lower bound follows it at constant width** so the user only ever
+sets one number.
+
+**Required behaviour (confirmed):**
+1. When no override is active, the card **always displays the schedule's current upper bound**
+   for that room. The scheduler keeps the card in sync — when the time-of-day band changes,
+   the displayed target moves with it.
+2. The user dragging the dial to a **different** value activates an override: the band tops
+   out at the new value for the 60-min window.
+3. At the end of the window the schedule resumes **and the card's displayed target reverts to
+   the scheduled upper bound** (the dial visibly snaps back).
+
+The override **lifecycle** (60-min duration, expiry, precedence `away > override > presence >
+static > schedule > default`) is **kept exactly as item 7**; only the input/representation and
+the new "keep the card synced to the schedule" behaviour are added. Decisions taken: backing
+entity = HA-core `generic_thermostat`; duration = keep the existing 60-min expiry.
+
+### Mechanism — write-back sync + read-back detection
+
+Because the card must *show* the schedule and the user edits the *same* control, the scheduler
+both **writes** the scheduled target onto each card and **reads it back** to detect edits.
+Per room it carries one extra piece of state across ticks: `last_written` = the scheduled
+upper bound it last pushed to the card. Each tick, for a room with no active override:
+
+- Read the card's current target `T_read`.
+- If `T_read != last_written` → the **user changed it** → start a 60-min override at `T_read`.
+- Else (user hasn't touched it) → if the scheduled upper bound `S_now` has changed
+  (schedule transition), call `set_temperature(S_now)` on the card and set `last_written =
+  S_now` so the dial tracks the schedule.
+
+On **expiry/cancel**, the scheduler writes the *current* scheduled upper bound back to the card
+(`set_temperature(S_now)`, `last_written = S_now`) — that is what makes the dial snap back to
+the schedule. The thermostat stays in `cool` mode at all times (it always shows a target);
+`hvac_mode` is **not** used as an override signal. On the first tick the scheduler writes the
+scheduled value to every card to seed `last_written`.
+
+Note: a user who sets the card to *exactly* the scheduled value is indistinguishable from "no
+edit" — that's a harmless no-op (the band is already that). Whole-°F precision makes the
+`T_read != last_written` comparison exact.
+
+### Key equivalence (why this reuses almost all of item 7)
+
+Setting the absolute upper bound to `T` is identical to applying the item-7 shift
+`T − scheduled_max_f` to *both* bounds: the max becomes `T` and the min becomes
+`T − (scheduled_max_f − scheduled_min_f)` = `T − W`, i.e. the **scheduled band width `W` is
+preserved automatically**. So the override-application engine stays; the override is just
+parameterised by an absolute target instead of a shift.
+
+The tracker keys on the **user's absolute target**, not the derived shift — otherwise a
+schedule transition mid-window would change `scheduled_max_f`, change the derived shift, and
+falsely restart the 60-min timer. Track the target; recompute the band fresh each tick.
+
+### HA side (to be created) — `generic_thermostat` per room
+
+A thermostat card needs a `climate` entity. The MPC's real AC units already have
+`climate_entity`s (in `house.yaml` under `ac_units`); these new entities are **separate,
+UI-only virtual thermostats** — the MPC never commands them to cool, it only reads/writes
+their *target*. Each is a core `generic_thermostat` whose `current_temperature` mirrors the
+room's existing sensor (so the card "shows the current temperature" for free) and whose
+`heater` points at a throwaway `input_boolean` we ignore. Add to `configuration.yaml`
+(restart HA), one block per modelled room:
+
+```yaml
+input_boolean:        # throwaway switch the generic_thermostats toggle; ignored by the MPC
+  mpc_dummy_master_bedroom: {name: "MPC dummy (master_bedroom)"}
+  # … one per room …
+
+climate:
+  - platform: generic_thermostat
+    name: "MPC Master Bedroom"            # entity → climate.mpc_master_bedroom
+    unique_id: mpc_master_bedroom
+    heater: input_boolean.mpc_dummy_master_bedroom
+    target_sensor: sensor.master_bedroom_temperature
+    ac_mode: true                          # cooling semantics; stays in 'cool'
+    initial_hvac_mode: cool                # always on so the card always shows a target
+    min_temp: 65                           # bounds the draggable range
+    max_temp: 85
+    target_temp: 77                        # seeded; scheduler overwrites with the schedule
+    precision: 1.0                         # whole-°F targets (HW switches on whole °F)
+  # … one per room: kids_bedroom, anna_office, dining_room, kitchen, family_room,
+  #    tv_room, nicolas_office …
+```
+
+- **The card is always "on" (cool) and always shows a target** — the scheduled upper bound
+  when idle, the user's value while overriding. `hvac_mode` carries no override meaning here.
+- **Cosmetic only:** generic_thermostat shows a heating/cooling ring and toggles its dummy
+  switch based on current-vs-target; ignored. (A HACS *template climate* would avoid the fake
+  ring/switch; rejected here to stay HA-core.)
+
+### MPC side
+
+- **`config/house.yaml`** — replace each room's `override_entity: input_number.mpc_override_<room>`
+  with `thermostat_entity: climate.mpc_<room>` (keep it as data, not code).
+- **`ha_bridge/controller.py`**
+  - `get_overrides()` → **`get_room_targets(house)`**: returns `{room_id: target_f}` — the raw
+    `attributes.temperature` of each card, rounded to int; omit a room whose card is
+    `unavailable`/`unknown` (fail-safe → treated as "no edit / follow schedule").
+  - `clear_override()` → **`set_room_target(house, room, temp_f)`**: call `climate.set_temperature`.
+    Used both to sync the card to the schedule and to revert it on expiry. (The existing
+    `set_hvac_mode(ac_id, …)` resolves ids against `ac_units`; add a small generic helper for
+    these room entities rather than reusing it. Also ensure the card stays in `cool`.)
+- **`control/schedule.py`**
+  - `update_override_tracker()` — track the **absolute target** instead of the shift;
+    `activated/changed/expired/cancelled` semantics unchanged. "No override" = room absent from
+    the dict (replacing the `0` sentinel).
+  - `resolve_targets_for_rooms()` — apply an active override as `{max_f: target, min_f: target −
+    W}` where `W` is the room's scheduled band width for the tick (equivalently: shift `target −
+    scheduled_max_f`). Still **beats presence, yields to away**; `W`/the base is the scheduled
+    band *ignoring* presence (override beats presence).
+- **`scheduler.py`** — owns the write-back sync described above: carry `last_written` per room,
+  resolve the base scheduled band first (for `S_now`/`W`), detect edits via `T_read !=
+  last_written`, push `S_now` on schedule transitions and on expiry. Log the override as an
+  absolute `→ 79°F` target, not a `+2°F` shift.
+- **`shadow_run.py` / `dry_run.py`** — shadow tracks+applies but **never writes**, so it can't
+  sync the card or revert it on expiry (read-only, by design — note this asymmetry: shadow
+  can't show the schedule on the card). dry_run shows any active target without the lifecycle.
+- **`scheduler._input_signature()` (the item-7a responsive sleep)** — **must be updated too**:
+  it currently polls `get_overrides`; point it at `get_room_targets` so the ~20-s early-wake
+  still fires when the user drags the card. Compare the poll against `last_written` so the
+  scheduler's *own* write-back doesn't count as a change. (Without this the card regresses to
+  up-to-10-min latency.)
+
+### Dashboard
+
+All 8 rooms get a `climate.mpc_<room>` entity, but the **main dashboard shows thermostat
+cards only for the key rooms** — master_bedroom, nicolas_office, family_room — with the
+remaining five on a secondary/detail view:
+
+```yaml
+type: vertical-stack
+cards:
+  - type: thermostat
+    entity: climate.mpc_master_bedroom
+  - type: thermostat
+    entity: climate.mpc_nicolas_office
+  - type: thermostat
+    entity: climate.mpc_family_room
+```
+
+### Edge cases / notes
+
+- Targets are whole °F (consistent with the integer-setpoint rule); `min_temp/max_temp` bound
+  the draggable range to 65–85°F so a stray value can't escape the modelled range.
+- Card `unavailable`/`unknown` → no edit detected (follow schedule), never an error.
+- **away mode**: the synced/display target becomes the **away band's upper bound** — the
+  scheduler pins each card to the away max while away, and a user edit during away does **not**
+  take effect (away beats override) and is overwritten on the next tick. When away clears, the
+  cards resync to the schedule.
+- **presence**: presence is an automatic layer that still drops an unoccupied room's actual
+  band to wide 65–85°F, but is **not** reflected on the dial (the card keeps showing the
+  schedule); an explicit user edit still beats presence, as today.
+- The dummy `input_boolean`s and the heating/cooling ring are cosmetic; the MPC keeps
+  controlling the real ACs via setpoints exactly as before.
+- **Tests**: update `tests/` that monkeypatch `get_overrides`/`clear_override`; add cases for
+  target→band conversion, width preservation across a schedule transition, edit detection
+  (`T_read != last_written` ⇒ override; `==` ⇒ none), schedule-transition write-back, and
+  expiry ⇒ `set_temperature(scheduled)`.
+
+**Status: MPC side implemented 2026-06-14; HA side pending (built in parallel).**
+`house.yaml` now declares `thermostat_entity: climate.mpc_<room>` per room (replacing
+`override_entity`). `controller.get_room_targets()` reads each card's target temperature
+(fail-safe omit on unavailable) and `controller.set_room_target()` writes it via
+`climate.set_temperature`. `schedule.update_override_tracker()` tracks the absolute target
+(so a schedule transition no longer restarts the 60-min timer) and
+`resolve_targets_for_rooms(override_targets=…)` applies it as `{max_f: target, min_f: target −
+W}`. `scheduler.py` carries `card_synced` per room and runs the write-back sync via two pure
+helpers — `_plan_card_detection` (first-tick seed / away-pin / edit-detect) and
+`_plan_card_revert` (resync on schedule transition, revert on expiry/cancel); the item-7a
+responsive-sleep `_input_signature` now polls `get_room_targets`. `shadow_run.py`/`dry_run.py`
+use a stateless "card ≠ scheduled max ⇒ override" (no writes, so no duration/expiry). Tests in
+`tests/test_controller.py`, `tests/test_schedule.py`, `tests/test_scheduler.py` updated/added.
+**Startup caveat:** on scheduler start the cards are reset to the current schedule value
+(seeding `card_synced`), so any override left on a card across a restart is discarded.
+**Still to do (HA side):** create the per-room `generic_thermostat` + dummy `input_boolean`
+entities and the dashboard cards per the config above, then verify end-to-end against live HA.
+
+---
+
 ## 8. Long-Term Override (Holiday Mode)
 
 When the house is empty for multiple days the regular schedule wastes energy cooling rooms

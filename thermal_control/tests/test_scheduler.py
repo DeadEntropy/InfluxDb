@@ -88,6 +88,56 @@ def test_append_decision_log_writes_header_then_row(monkeypatch, tmp_path):
     assert rows == [{"a": "1", "b": "2"}, {"a": "3", "b": "4"}]
 
 
+# ── thermostat card sync/detection (NEXT_STEPS item 7b) ─────────────────────
+def test_plan_card_detection_seeds_then_detects_edit():
+    display = {"kitchen": 77, "family_room": 76}
+
+    # first sight: nothing synced yet → both cards seeded to the schedule, no edit
+    detected, writes = sc._plan_card_detection(
+        raw_targets={}, display_target=display, card_synced={}, away=False
+    )
+    assert detected == {} and writes == {"kitchen": 77, "family_room": 76}
+
+    # synced; user dragged kitchen to 80, family_room untouched (still shows 76)
+    synced = {"kitchen": 77, "family_room": 76}
+    detected, writes = sc._plan_card_detection(
+        raw_targets={"kitchen": 80, "family_room": 76},
+        display_target=display, card_synced=synced, away=False,
+    )
+    assert detected == {"kitchen": 80} and writes == {}
+
+
+def test_plan_card_detection_away_pins_card_ignores_edits():
+    # away → card pinned to the away target; a user edit is overwritten, not honored
+    detected, writes = sc._plan_card_detection(
+        raw_targets={"kitchen": 80}, display_target={"kitchen": 78},
+        card_synced={"kitchen": 78}, away=True,
+    )
+    assert detected == {} and writes == {"kitchen": 78}
+
+
+def test_plan_card_revert_resyncs_and_reverts():
+    display = {"kitchen": 76, "family_room": 77}
+    synced  = {"kitchen": 77, "family_room": 77}     # kitchen schedule moved 77→76
+
+    # kitchen under an active override → left alone; family_room resynced to 77;
+    # nothing to do for a card already on its schedule value
+    writes = sc._plan_card_revert(
+        raw_targets={"kitchen": 80, "family_room": 77},
+        display_target=display, card_synced=synced, effective={"kitchen": 80},
+    )
+    # kitchen is in effective → skipped despite the schedule move; family_room
+    # already on 77 → no write
+    assert writes == {}
+
+    # override expired: card still shows the old user value 80, not in effective
+    writes = sc._plan_card_revert(
+        raw_targets={"kitchen": 80}, display_target={"kitchen": 77},
+        card_synced={"kitchen": 77}, effective={},
+    )
+    assert writes == {"kitchen": 77}                 # reverted to schedule
+
+
 # ── shadow_run.append_row ───────────────────────────────────────────────────
 def test_shadow_append_row(monkeypatch, tmp_path):
     log = tmp_path / "shadow.csv"
