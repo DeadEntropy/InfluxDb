@@ -11,7 +11,8 @@
 
 	// Mount the controller logs folder
 	"mounts": [
-		"source=nas_thermal_logs,target=/workspaces/InfluxDb/remote_logs,type=volume"
+		"source=nas_thermal_logs,target=/workspaces/InfluxDb/remote_logs,type=volume",
+		"source=${localEnv:USERPROFILE}/.ssh,target=/root/.ssh,type=bind,readonly"
 	],
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
