@@ -80,7 +80,7 @@ def test_write_safe_setpoints(monkeypatch, house_config):
 
 # ── _append_decision_log ────────────────────────────────────────────────────
 def test_append_decision_log_writes_header_then_row(monkeypatch, tmp_path):
-    log = tmp_path / "decisions.csv"
+    log = tmp_path / "mpc_decision_log.csv"
     monkeypatch.setattr(sc, "DECISION_LOG", log)
     sc._append_decision_log({"a": 1, "b": 2})
     sc._append_decision_log({"a": 3, "b": 4})

@@ -1,6 +1,6 @@
 ---
 name: live-analysis
-description: Analyze the live MPC decisions log (decisions.csv) — AC on/off history, room temperatures vs comfort bands, cost margin, and two plots: (1) full-history on/off + temps with breach markers, (2) last 3h history + 3h forward projection under MPC vs all-off scenarios. Use when the user asks to analyze, review, or plot the live MPC run.
+description: Analyze the live MPC decisions log (mpc_decision_log.csv) — AC on/off history, room temperatures vs comfort bands, cost margin, and two plots: (1) full-history on/off + temps with breach markers, (2) last 3h history + 3h forward projection under MPC vs all-off scenarios. Use when the user asks to analyze, review, or plot the live MPC run.
 ---
 
 # Live MPC analysis
@@ -13,11 +13,11 @@ sensor temps, MPC on/off decisions, setpoints written to HA, and 8-combo costs).
 From the repo root:
 
 ```bash
-python .claude/skills/live-analysis/analyze_live.py [path/to/decisions.csv]
+python .claude/skills/live-analysis/analyze_live.py [path/to/mpc_decision_log.csv]
     [--plot ac_onoff.png] [--plot2 ac_projection.png] [--no-plot]
 ```
 
-- Default log: `remote_logs/decisions.csv`
+- Default log: `remote_logs/mpc_decision_log.csv`
 - Default plot 1: `ac_onoff.png` at repo root
 - Default plot 2: `ac_projection.png` at repo root
 - Comfort bands are resolved per tick from `thermal_control/config/control.yaml`;

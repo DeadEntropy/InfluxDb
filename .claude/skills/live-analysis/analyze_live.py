@@ -1,7 +1,7 @@
 """
 analyze_live.py
 ───────────────
-Analysis of the live MPC decisions log (decisions.csv) produced by
+Analysis of the live MPC decisions log (mpc_decision_log.csv) produced by
 thermal_control/scheduler.py.
 
 Reports:
@@ -13,7 +13,7 @@ Reports:
   6. Plot 2 (ac_projection.png): last 3h history + 3h projection under MPC vs all-off
 
 Usage (from the repo root):
-    python .claude/skills/live-analysis/analyze_live.py [path/to/decisions.csv]
+    python .claude/skills/live-analysis/analyze_live.py [path/to/mpc_decision_log.csv]
         [--plot ac_onoff.png] [--plot2 ac_projection.png] [--no-plot]
 """
 
@@ -26,7 +26,7 @@ import yaml
 
 REPO_ROOT    = Path(__file__).resolve().parents[3]
 CONTROL_YAML = REPO_ROOT / "thermal_control" / "config" / "control.yaml"
-DEFAULT_CSV  = REPO_ROOT / "remote_logs" / "decisions.csv"
+DEFAULT_CSV  = REPO_ROOT / "remote_logs" / "mpc_decision_log.csv"
 DEFAULT_PLOT  = REPO_ROOT / "ac_onoff.png"
 DEFAULT_PLOT2 = REPO_ROOT / "ac_projection.png"
 
@@ -63,12 +63,29 @@ def _hhmm(s):
 def resolve_schedule(cfg, ts_local):
     """Return (schedule_name, {room: (min_f, max_f)}, default_band) for a local timestamp."""
     default  = (cfg["targets"]["default"]["min_f"], cfg["targets"]["default"]["max_f"])
-    entries  = sorted(cfg["targets"]["schedule"], key=lambda e: _hhmm(e["time"]))
-    now_min  = ts_local.hour * 60 + ts_local.minute
-    active   = entries[-1]
-    for entry in entries:
-        if _hhmm(entry["time"]) <= now_min:
-            active = entry
+    schedule = cfg["targets"].get("schedule", [])
+    if not schedule:
+        return "default", {}, default
+
+    is_weekend = ts_local.weekday() >= 5  # Mon=0 … Sat=5, Sun=6
+    applicable = []
+    for e in schedule:
+        days = e.get("days")
+        if days is None:
+            applicable.append(e)
+        elif days == "weekend" and is_weekend:
+            applicable.append(e)
+        elif days == "weekday" and not is_weekend:
+            applicable.append(e)
+
+    if not applicable:
+        return "default", {}, default
+
+    by_time    = sorted(applicable, key=lambda e: _hhmm(e["time"]))
+    now_min    = ts_local.hour * 60 + ts_local.minute
+    candidates = [e for e in by_time if _hhmm(e["time"]) <= now_min]
+    active     = candidates[-1] if candidates else by_time[-1]
+
     rooms = active.get("rooms") or {}
     bands = {r: (b["min_f"], b["max_f"]) for r, b in rooms.items()}
     return active["name"], bands, default

@@ -63,7 +63,8 @@ STALE_LIMIT_MINUTES = 30   # drop cached reading after this long
 FALLBACK_TEMP_F     = 74.0 # used when a room has no reading at all
 SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 
-DECISION_LOG = ROOT / "logs" / "decisions.csv"
+DECISION_LOG    = ROOT / "logs" / "mpc_decision_log.csv"
+USER_EVENT_LOG  = ROOT / "logs" / "user_inputs.log"
 
 
 def _write_safe_setpoints(house):
@@ -93,6 +94,35 @@ def _append_decision_log(record):
             writer.writerow(record)
     except Exception as exc:
         logger.warning(f"Decision log write failed: {exc}")
+
+
+_USER_EVENT_FIELDS = ["timestamp", "event", "room", "value"]
+
+
+def _append_user_event(ts, event, room="", value=""):
+    """
+    Append one row to the user-event log (user_inputs.log).
+
+    Columns:
+      timestamp  ISO-8601 local time of the event
+      event      one of: away_activated, away_deactivated,
+                         presence_occupied, presence_unoccupied,
+                         override_activated, override_changed,
+                         override_expired, override_cancelled
+      room       room_id (empty for away-mode events)
+      value      target_f for override events; empty otherwise
+    """
+    try:
+        USER_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not USER_EVENT_LOG.exists()
+        with open(USER_EVENT_LOG, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_USER_EVENT_FIELDS)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({"timestamp": ts, "event": event,
+                             "room": room, "value": value})
+    except Exception as exc:
+        logger.warning(f"User event log write failed: {exc}")
 
 
 def load_configs():
@@ -354,11 +384,13 @@ def run():
                 #    Both override the schedule; away wins over presence. State
                 #    transitions are logged so they show up in the history.
                 away = ha.get_away_mode(control)
+                now_dt = datetime.now(tz=local_tz)
                 if away != away_active:
+                    event_name = "away_activated" if away else "away_deactivated"
                     logger.warning(f"Away mode {'ACTIVATED' if away else 'DEACTIVATED'}")
+                    _append_user_event(now_dt.isoformat(timespec="seconds"), event_name)
                     away_active = away
 
-                now_dt     = datetime.now(tz=local_tz)
                 unoccupied = set()
                 overrides  = {}
 
@@ -386,6 +418,11 @@ def run():
                         if presence_state.get(room) != occ:
                             logger.warning(f"Presence {room}: "
                                            f"{'occupied' if occ else 'UNOCCUPIED'}")
+                            _append_user_event(
+                                now_dt.isoformat(timespec="seconds"),
+                                "presence_occupied" if occ else "presence_unoccupied",
+                                room=room,
+                            )
                             presence_state[room] = occ
                     unoccupied = {r for r, occ in presence.items() if not occ}
                     if unoccupied:
@@ -399,6 +436,12 @@ def run():
                     )
                     for room, kind, target in events:
                         logger.warning(f"Override {room}: {kind} (→ {target}°F)")
+                        _append_user_event(
+                            now_dt.isoformat(timespec="seconds"),
+                            f"override_{kind}",
+                            room=room,
+                            value=str(target),
+                        )
                     if overrides:
                         logger.info("Active overrides: "
                                     + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))

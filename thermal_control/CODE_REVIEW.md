@@ -264,7 +264,7 @@ making step 10 ("monitor for 1 week, tune `energy_weight`") impossible.
   `cost_<3-bit-combo>` for all 8 combinations, `proj_<room>` at horizon end.
 
 - `_append_decision_log(record)` in `scheduler.py` appends one CSV row per tick
-  to `thermal_control/logs/decisions.csv`, creating the file and header on first
+  to `thermal_control/logs/mpc_decision_log.csv`, creating the file and header on first
   run. Write failures in the log helper are caught and logged as `WARNING` so
   they never crash the control loop.
 
