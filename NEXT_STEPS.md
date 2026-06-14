@@ -182,7 +182,7 @@ both bounds of the resolved band — **beating presence** (an explicit request c
 but **yielding to away mode**. The prod scheduler reads, tracks, applies, and resets expired
 sliders to 0; `shadow_run.py` tracks + applies but never writes (so expired sliders aren't reset
 in shadow); `dry_run.py` shows any non-zero slider as active without the duration lifecycle.
-Transition events go to the logger; the structured `actions.csv` trail is still item 10. Note
+Transition events go to the logger; the structured `user_inputs.log` trail is item 10 (now done). Note
 the precedence is now away > override > presence > static > schedule > default.
 
 ---
@@ -418,10 +418,10 @@ substitutes the away band for every room, beating the schedule and static overri
 also reserved in `resolve_targets` so the block isn't mistaken for a per-room override).
 `scheduler.py`, `shadow_run.py`, and `dry_run.py` all read the flag each tick. ON/OFF
 *transitions* are logged via the normal logger; the shadow log records `active_schedule=away`
-(a value change on an existing column, not a new one). `decisions.csv` is deliberately left
+(a value change on an existing column, not a new one). `mpc_decision_log.csv` is deliberately left
 unchanged — adding a column would give new rows more fields than the existing server log's header
-and break the live-analysis pandas read. The structured per-tick audit trail (`actions.csv`) is
-deferred to item 10. Presence-sensor precedence (item 9) is documented but item 9 isn't built
+and break the live-analysis pandas read. The structured per-tick audit trail (`user_inputs.log`) is
+item 10 (now done). Presence-sensor precedence (item 9) is documented but item 9 isn't built
 yet, so there is nothing for away mode to override there today.
 
 ---
@@ -489,24 +489,23 @@ state. `schedule.resolve_targets_for_rooms(..., unoccupied=…)` drops each empt
 `WIDE_BAND` (65–85°F), overriding the schedule/static band but yielding to away mode (when away,
 presence is not even read). `scheduler.py`, `shadow_run.py`, and `dry_run.py` read presence each
 tick and log per-room occupied/UNOCCUPIED transitions via the normal logger. As with item 8, no
-`decisions.csv` column is added (would break the existing log header / live-analysis read); the
-structured `actions.csv` trail is deferred to item 10. Rooms without a `presence_entity` are
+`mpc_decision_log.csv` column is added (would break the existing log header / live-analysis read); the
+structured `user_inputs.log` trail is item 10 (now done). Rooms without a `presence_entity` are
 omitted from the dict and treated as always occupied, so the other seven rooms are unchanged.
 
 ---
 
 ## 10. Logging of User Actions
 
-All user-driven state changes should be recorded so they can be correlated with comfort and
-energy data during post-run analysis.
+**Status: implemented.** User-driven state changes are logged to `thermal_control/logs/user_inputs.log`
+(CSV, same directory as `mpc_decision_log.csv`) so they can be correlated with comfort and energy
+data during post-run analysis.
 
-Design:
-- **File**: `actions.csv` in the same directory as `decisions.csv`, same CSV format (timestamp
-  + typed columns).
-- **Events to log**: manual override activated/expired (room, shift_f, duration), away mode
-  on/off, presence sensor state changes (room, occupied/unoccupied).
-- The scheduler appends a row on every state change; the file is not rotated (same retention
-  as the decisions log).
+- **File**: `thermal_control/logs/user_inputs.log` — CSV with columns `timestamp`, `event`, `room`, `value`.
+- **Events logged**: `away_activated`, `away_deactivated`, `presence_occupied`, `presence_unoccupied`,
+  `override_activated`, `override_changed`, `override_expired`, `override_cancelled`.
+- The scheduler appends a row on every state change via `_append_user_event()`; the file is not
+  rotated (same retention as the decisions log).
 
 ---
 
