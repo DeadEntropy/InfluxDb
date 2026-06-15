@@ -44,12 +44,12 @@ services:
 
   # Read-only web dashboard — visualises the schedule, overrides and the live
   # decision log. Writes nothing; safe to run alongside prod.
-  #   docker compose --profile dashboard up -d dashboard   → http://server:8050
+  #   docker compose --profile dashboard up -d dashboard   → http://server:8111
   # Pin a build with MPC_TAG=<git-sha>; built from Dockerfile.dashboard.
   dashboard:
     image: deadentropy/mpc-dashboard:${MPC_TAG:-latest}
     ports:
-      - "8050:5111"
+      - "8111:5111"   # host 8111 (8050 is taken by account_reporting_ui)
     environment:
       # Read the same logs the prod scheduler writes, and the live config.
       MPC_LOGS_DIR: /app/thermal_control/logs
