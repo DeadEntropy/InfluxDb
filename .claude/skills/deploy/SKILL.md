@@ -27,11 +27,12 @@ ssh-keygen -t ed25519 -f /tmp/mpc_deploy -C "mpc-deploy" -N ""
 cat /tmp/mpc_deploy.pub   # give this to the user to add on the server
 ```
 
-Define a shell alias for the rest of the steps:
-```bash
-SSH="ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no"
-SCP="scp -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no"
-```
+**Run each `ssh`/`scp` command inline** — exactly as written in the steps below,
+starting with the literal `ssh `/`scp ` — do **not** wrap them in a shell
+variable (`SSH="ssh …"; $SSH …`). The allow-rules in `.claude/settings.local.json`
+match on the command prefix, so a command that starts with `SSH=` instead of
+`ssh ` will prompt for approval every time. For the same reason, avoid prefixing
+with `echo … &&`; if you need a label, put it in a separate command.
 
 ## Step 1 — confirm SSH works and compose directory exists
 
