@@ -1,77 +1,147 @@
 ---
 name: deploy
-description: Deploy the latest MPC thermal controller image to the production server (192.168.5.206). SSHs in as nicolas, brings the running prod container down, pulls the latest image, starts it back up in prod mode, and checks the logs to confirm it's healthy. Use when the user says "deploy", "push to server", "update the server", or similar.
+description: Deploy the latest MPC thermal controller AND dashboard images to the production server (192.168.5.206). SSHs in as nicolas, brings the running prod container down, pulls the latest images, starts prod + the read-only dashboard back up, and checks the logs to confirm both are healthy. Use when the user says "deploy", "push to server", "update the server", or similar.
 ---
 
 # Deploy to production
 
-Deploy `deadentropy/mpc-thermal:latest` to `192.168.5.206` (user: `nicolas`).
+Deploy two images to `192.168.5.206` (user: `nicolas`):
 
-## Step 1 — confirm the compose directory exists
+- `deadentropy/mpc-thermal:latest` — the live controller (`prod` service, **safety-critical**: writes setpoints to real ACs).
+- `deadentropy/mpc-dashboard:latest` — the read-only web dashboard (`dashboard` service, port 8050; safe to (re)start any time, no side effects on the ACs).
+
+**Prerequisite:** both images must already be on Docker Hub. The dashboard image is built from `Dockerfile.dashboard` — if it has never been built/pushed, the `docker pull` in Step 5 will fail. If the user only wants to ship one of the two, deploy just that service (skip the other's pull/up steps).
+
+## SSH setup (read first)
+
+`/root/.ssh/config` has world-writable permissions (777) on a read-only filesystem — SSH refuses to use it. All SSH/SCP commands must bypass it:
+
+```
+-F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no
+```
+
+The key at `/tmp/mpc_deploy` is ephemeral (lost on container restart). If it's missing, generate a new one and ask the user to add the public key to `nicolas@192.168.5.206:~/.ssh/authorized_keys`:
+
+```bash
+ssh-keygen -t ed25519 -f /tmp/mpc_deploy -C "mpc-deploy" -N ""
+cat /tmp/mpc_deploy.pub   # give this to the user to add on the server
+```
+
+Define a shell alias for the rest of the steps:
+```bash
+SSH="ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no"
+SCP="scp -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no"
+```
+
+## Step 1 — confirm SSH works and compose directory exists
 
 The compose file lives at `/mnt/smarthome/thermal_controler/docker-compose.yml`.
 
 ```bash
-ssh nicolas@192.168.5.206 "ls /mnt/smarthome/thermal_controler/docker-compose.yml"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 "ls /mnt/smarthome/thermal_controler/docker-compose.yml"
 ```
 
-If missing, tell the user and stop. Use `COMPOSE_DIR=/mnt/smarthome/thermal_controler` for all remaining steps.
+If the key is missing/rejected, follow the SSH setup above first. If the compose dir is missing, tell the user and stop. Use `COMPOSE_DIR=/mnt/smarthome/thermal_controler` for all remaining steps.
 
-## Step 2 — check what's currently running
+## Step 2 — copy updated files to the server
+
+Copy the docker-compose file and config directory from the local repo to the server before touching any running containers.
 
 ```bash
-ssh nicolas@192.168.5.206 "cd /mnt/smarthome/thermal_controler && docker compose ps"
+scp -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no \
+  /workspaces/InfluxDb/docker-compose.yml \
+  nicolas@192.168.5.206:/mnt/smarthome/thermal_controler/docker-compose.yml
 ```
 
-Note which services are up. **Never start both `shadow` and `prod` at once** — if shadow is running, bring it down too.
+```bash
+scp -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no \
+  /workspaces/InfluxDb/thermal_control/config/control.yaml \
+  /workspaces/InfluxDb/thermal_control/config/house.yaml \
+  nicolas@192.168.5.206:/mnt/smarthome/thermal_controler/thermal_control/config/
+```
 
-## Step 3 — bring down the running containers
+(`rsync` is not available in this container — use `scp` for individual files.) If either transfer fails, stop and report — do not proceed with a stale compose file or config.
+
+## Step 3 — check what's currently running
 
 ```bash
-ssh nicolas@192.168.5.206 "cd /mnt/smarthome/thermal_controler && docker compose --profile prod down"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose ps"
+```
+
+Note which services are up. **Never start both `shadow` and `prod` at once** — if shadow is running, bring it down too. A running `dashboard` service is fine and expected — it's read-only and coexists with either prod or shadow; Step 6 just recreates it from the new image.
+
+## Step 4 — bring down the running containers
+
+```bash
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose --profile prod down"
 ```
 
 Wait for confirmation that the container stopped (the prod service has a 30 s grace period while it writes safe setpoints to the ACs — this is expected).
 
-## Step 4 — pull the latest image
+## Step 5 — pull the latest images
 
 ```bash
-ssh nicolas@192.168.5.206 "docker pull deadentropy/mpc-thermal:latest"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "docker pull deadentropy/mpc-thermal:latest && docker pull deadentropy/mpc-dashboard:latest"
 ```
 
-Confirm the digest line (`Digest: sha256:...`) appears. If the pull fails (network, auth), stop and report.
+Confirm a digest line (`Digest: sha256:...`) for **each** image. If the controller pull fails, stop and report. If only the *dashboard* pull fails (e.g. it was never built/pushed), you may still proceed with prod — finish the controller steps and skip the dashboard `up` in Step 6, then tell the user the dashboard image is missing.
 
-## Step 5 — start prod
+## Step 6 — start prod, then the dashboard
+
+Start the controller first (the safety-critical service), then the dashboard.
 
 ```bash
-ssh nicolas@192.168.5.206 "cd /mnt/smarthome/thermal_controler && docker compose --profile prod up -d prod"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose --profile prod up -d prod"
 ```
 
-## Step 6 — verify it's running
+Then bring the dashboard up. `up -d` recreates it from the freshly pulled image if it changed; it's read-only and profile-gated, so this never affects prod or the ACs:
+
+```bash
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose --profile dashboard up -d dashboard"
+```
+
+## Step 7 — verify both are running
 
 Wait ~5 seconds for startup, then:
 
 ```bash
-ssh nicolas@192.168.5.206 "cd /mnt/smarthome/thermal_controler && docker compose ps && docker compose logs --tail=40 prod"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose ps && docker compose logs --tail=40 prod && docker compose logs --tail=20 dashboard"
 ```
 
 ### Healthy signs to look for
+**prod:**
 - `State: running` (or `Up`) in `docker compose ps`
 - `MPC_VERSION` line — confirms which git SHA is live
 - `Scheduler starting` or first control-loop tick logged
 - No `ERROR`, `Traceback`, or `Exited` in the output
 
+**dashboard:**
+- `State: running` (or `Up`), port `8050->5111` mapped in `docker compose ps`
+- gunicorn `Booting worker` / `Listening at: http://0.0.0.0:5111` in the logs
+- No `Traceback` (e.g. missing config/logs mount)
+- Optionally confirm it serves: `curl -sf -o /dev/null -w "%{http_code}\n" http://192.168.5.206:8050/` → `200`
+
 ### Unhealthy signs — stop and report
 - Container status is `Exited` or `Restarting`
 - Traceback in logs
-- Missing `.env` or weight file errors
+- prod: missing `.env` or weight file errors
+- dashboard: missing config/logs mount, or a port-8050 conflict
+
+The dashboard is non-critical: if **only** the dashboard is unhealthy, leave prod running, report the dashboard error, and don't roll prod back for it.
 
 ## Deploying shadow mode instead
 
 If the user says "deploy shadow" or passes `shadow` as an argument:
 
 ```bash
-ssh nicolas@192.168.5.206 "cd /mnt/smarthome/thermal_controler && docker compose up shadow"
+ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
+  "cd /mnt/smarthome/thermal_controler && docker compose up shadow"
 ```
 
 Shadow runs in the foreground for 24 h then exits — do **not** use `-d`. Tail the output live if the user wants to watch it.
