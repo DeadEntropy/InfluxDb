@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="30">
+  <title>MPC Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+  <h1>MPC Thermal Dashboard</h1>
+  <span class="muted">refreshed {{ refreshed }} · auto-refresh 30s</span>
+</header>
+
+<!-- ── Section 1: schedule ─────────────────────────────────────────────── -->
+<section>
+  <div class="section-head">
+    <h2>Schedule the MPC sees</h2>
+    <div class="toggle">
+      <a href="?day=weekday" class="{{ 'active' if day_type=='weekday' }}">Weekday</a>
+      <a href="?day=weekend" class="{{ 'active' if day_type=='weekend' }}">Weekend</a>
+    </div>
+  </div>
+
+  {% if overrides %}
+  <div class="overrides">
+    <strong>Active HA overrides:</strong>
+    {% for o in overrides %}
+      <span class="ov-pill">{{ o.room }} → {{ o.target }}°F
+        <em>({{ o.minutes_left }} min left)</em></span>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="overrides none">No active HA overrides.</div>
+  {% endif %}
+
+  <table class="grid">
+    <thead>
+      <tr>
+        <th class="room-col">Room</th>
+        {% for h in hours %}
+          <th class="{{ 'now-col' if h == current_hour }}">{{ "%02d"|format(h) }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for ac_id, covers in zones %}
+        <tr class="zone-row"><td colspan="25">{{ ac_id }}</td></tr>
+        {% for room in covers %}
+        <tr>
+          <td class="room-col">{{ room }}</td>
+          {% for cell in grid[room] %}
+          <td class="{{ cell.cls }} {{ 'now-col' if cell.is_now }}" title="{{ cell.title }}">
+            {{ cell.label }}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="legend">
+    <span class="band-tight">tight</span>
+    <span class="band-mid">mid</span>
+    <span class="band-loose">loose</span>
+    <span class="band-wide">off / don't care</span>
+  </div>
+</section>
+
+<!-- ── Section 2: MPC status ───────────────────────────────────────────── -->
+<section>
+  <h2>What the MPC is doing now</h2>
+
+  {% if not decision %}
+  <p class="muted">No decision log found at remote_logs/mpc_decision_log.csv.</p>
+  {% else %}
+  <div class="status-meta">
+    <span>Last tick: <strong>{{ decision.timestamp }}</strong>
+      {% if decision.age_min is not none %}
+        ({{ decision.age_min }} min ago){% endif %}</span>
+    {% if decision.stale %}<span class="badge bad">STALE</span>{% endif %}
+    {% if decision.write_ok %}<span class="badge ok">write ok</span>
+    {% else %}<span class="badge bad">write FAILED</span>{% endif %}
+    {% if decision.outdoor is not none %}
+      <span>Outdoor: <strong>{{ decision.outdoor | half }}°F</strong></span>{% endif %}
+    {% if decision.cost_chosen is not none %}
+      <span>Cost: <strong>{{ "%.4f"|format(decision.cost_chosen) }}</strong>
+        {% if decision.cheapest_alt is not none %}
+          (next best {{ "%.4f"|format(decision.cheapest_alt) }}){% endif %}</span>
+    {% endif %}
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>AC units</h3>
+      {% for ac in decision.acs %}
+      <div class="ac-row">
+        <span class="{{ 'on' if ac.on else 'off' }}">
+          {{ '● ON' if ac.on else '○ OFF' }}</span>
+        <span class="ac-name">{{ ac.id }}</span>
+        <span class="muted">sp {{ ac.setpoint }}°F</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h3>Rooms vs band</h3>
+      {% for r in decision.rooms %}
+      <div class="room-row tone-{{ r.tone }} {{ 'overridden' if r.overridden }}">
+        <span class="ac-name">{{ r.room }}{% if r.overridden %} <em class="ov-tag">OVR</em>{% endif %}</span>
+        <span>{{ r.temp | half }}°F</span>
+        <span class="muted">
+          {% if r.overridden %}{{ r.min_f | half }}–{{ r.max_f | half }} ({{ r.sched_label }})
+          {% elif r.wide %}off
+          {% else %}{{ r.min_f | half }}–{{ r.max_f | half }}{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <h3>Recent ticks</h3>
+  <table class="recent">
+    <thead>
+      <tr>
+        <th>time</th>
+        {% for ac in decision.acs %}<th>{{ ac.id }}</th>{% endfor %}
+        {% for r in decision.rooms %}<th>{{ r.room[:6] }}</th>{% endfor %}
+        <th>out</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in decision.recent %}
+      <tr>
+        <td>{{ row.timestamp[11:16] }}</td>
+        {% for ac in decision.acs %}
+          <td class="{{ 'on' if row['on_' ~ ac.id]=='1' else 'off' }}">
+            {{ '●' if row['on_' ~ ac.id]=='1' else '○' }}</td>
+        {% endfor %}
+        {% for r in decision.rooms %}
+          <td>{{ row['T_' ~ r.room] | half }}</td>
+        {% endfor %}
+        <td>{{ row.T_outdoor | half }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+</body>
+</html>

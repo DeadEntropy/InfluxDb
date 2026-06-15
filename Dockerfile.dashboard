@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+# Git commit the image was built from (mirrors Dockerfile.mpc).
+ARG GIT_SHA=unknown
+ENV MPC_VERSION=$GIT_SHA
+LABEL org.opencontainers.image.revision=$GIT_SHA
+
+WORKDIR /app
+
+COPY thermal_control/requirements.txt ./thermal_control/requirements.txt
+RUN pip install --no-cache-dir -r thermal_control/requirements.txt gunicorn
+
+# Code + baked-in config (config is volume-mounted over this on the server).
+COPY . .
+
+EXPOSE 5111
+
+# Read-only viewer — served by gunicorn. The container reads logs/config from
+# the dirs given by MPC_LOGS_DIR / MPC_CONFIG_DIR (set in docker-compose).
+CMD ["gunicorn", "--bind", "0.0.0.0:5111", "--workers", "2", \
+     "thermal_control.dashboard.app:app"]

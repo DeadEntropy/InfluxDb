@@ -41,3 +41,21 @@ services:
     stop_grace_period: 30s
     # Profile gate: a bare `docker compose up` must never start the live controller.
     profiles: ["prod"]
+
+  # Read-only web dashboard — visualises the schedule, overrides and the live
+  # decision log. Writes nothing; safe to run alongside prod.
+  #   docker compose --profile dashboard up -d dashboard   → http://server:8050
+  # Pin a build with MPC_TAG=<git-sha>; built from Dockerfile.dashboard.
+  dashboard:
+    image: deadentropy/mpc-dashboard:${MPC_TAG:-latest}
+    ports:
+      - "8050:5111"
+    environment:
+      # Read the same logs the prod scheduler writes, and the live config.
+      MPC_LOGS_DIR: /app/thermal_control/logs
+      MPC_CONFIG_DIR: /app/thermal_control/config
+    volumes:
+      - ./thermal_control/logs:/app/thermal_control/logs:ro
+      - ./thermal_control/config:/app/thermal_control/config:ro
+    restart: unless-stopped
+    profiles: ["dashboard"]

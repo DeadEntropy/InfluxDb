@@ -1,0 +1,146 @@
+:root {
+  --bg: #0f1419;
+  --panel: #1a2029;
+  --line: #2a323d;
+  --text: #d6dde6;
+  --muted: #8a95a3;
+  --accent: #4aa3ff;
+  --ok: #3fb950;
+  --bad: #f85149;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+}
+header h1 { font-size: 18px; margin: 0; }
+
+h2 { font-size: 16px; margin: 0 0 12px; }
+h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+.muted { color: var(--muted); font-size: 12px; }
+
+section {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.section-head { display: flex; align-items: center; justify-content: space-between; }
+
+.toggle a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-left: 6px;
+}
+.toggle a.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+/* ── overrides ─────────────────────────────────────────────── */
+.overrides { margin: 12px 0; }
+.overrides.none { color: var(--muted); }
+.ov-pill {
+  display: inline-block;
+  background: #3a2a12;
+  border: 1px solid #6b4d1f;
+  color: #ffcf7a;
+  padding: 3px 10px;
+  border-radius: 12px;
+  margin: 2px 4px;
+}
+.ov-pill em { color: #b8924f; font-style: normal; }
+
+/* ── schedule grid ─────────────────────────────────────────── */
+table.grid {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 11px;
+  margin-top: 8px;
+}
+table.grid th, table.grid td {
+  border: 1px solid var(--line);
+  padding: 4px 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+table.grid th { color: var(--muted); font-weight: 500; }
+.room-col { text-align: left !important; padding-left: 8px !important; min-width: 120px; }
+.zone-row td { background: #11161d; color: var(--accent); font-weight: 600; text-align: left; padding-left: 8px; }
+
+.band-tight    { background: #15406b; color: #cfe6ff; }
+.band-mid      { background: #1d3450; color: #b6cee8; }
+.band-loose    { background: #213040; color: #9fb4c8; }
+.band-wide     { background: #161b22; color: #4a5562; }
+.band-override { background: #5a3a0f; color: #ffcf7a; font-weight: 600; }
+
+/* current-hour column highlight */
+table.grid th.now-col { color: #fff; background: #2a3a18; }
+table.grid td.now-col {
+  box-shadow: inset 2px 0 var(--accent), inset -2px 0 var(--accent);
+  outline: 1px solid var(--accent);
+}
+
+.legend { margin-top: 10px; display: flex; gap: 8px; font-size: 11px; }
+.legend span { padding: 2px 8px; border-radius: 4px; }
+
+/* ── status ────────────────────────────────────────────────── */
+.status-meta { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+.badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge.ok { background: #133a1c; color: var(--ok); }
+.badge.bad { background: #3a1414; color: var(--bad); }
+
+.cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-width: 260px;
+  flex: 1;
+}
+.ac-row { display: flex; gap: 10px; align-items: center; padding: 3px 0; }
+.room-row {
+  display: flex; gap: 10px; align-items: center;
+  padding: 3px 8px; border-radius: 4px;
+  border-left: 3px solid transparent;
+}
+.ac-name { flex: 1; }
+
+/* Discrete row tint: red = needs cooling, blue = already cool */
+.room-row.tone-hot  { background: rgba(248, 81, 73, 0.14); }
+.room-row.tone-cool { background: rgba(74, 163, 255, 0.12); }
+.room-row.tone-neutral { background: transparent; }
+
+/* Override marked by a left accent, so the tone tint still shows */
+.room-row.overridden { border-left-color: #d9a441; }
+.ov-tag {
+  font-style: normal; font-size: 10px; font-weight: 700;
+  background: #5a3a0f; color: #ffcf7a; padding: 0 4px; border-radius: 3px;
+}
+.on { color: var(--ok); }
+.off { color: var(--muted); }
+
+/* ── recent table ──────────────────────────────────────────── */
+table.recent { border-collapse: collapse; width: 100%; font-size: 11px; }
+table.recent th, table.recent td {
+  border: 1px solid var(--line);
+  padding: 3px 6px;
+  text-align: center;
+}
+table.recent th { color: var(--muted); font-weight: 500; }
+table.recent td.on { color: var(--ok); }
+table.recent td.off { color: #3a424d; }
