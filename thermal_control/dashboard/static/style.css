@@ -134,13 +134,14 @@ table.grid td.now-col {
 .on { color: var(--ok); }
 .off { color: var(--muted); }
 
-/* ── recent table ──────────────────────────────────────────── */
-table.recent { border-collapse: collapse; width: 100%; font-size: 11px; }
-table.recent th, table.recent td {
+/* ── on/off plot ───────────────────────────────────────────── */
+img.onoff-plot {
+  display: block;
+  width: 100%;
+  max-width: 1100px;
+  height: auto;
+  margin-top: 6px;
   border: 1px solid var(--line);
-  padding: 3px 6px;
-  text-align: center;
+  border-radius: 4px;
+  background: #fff;
 }
-table.recent th { color: var(--muted); font-weight: 500; }
-table.recent td.on { color: var(--ok); }
-table.recent td.off { color: #3a424d; }

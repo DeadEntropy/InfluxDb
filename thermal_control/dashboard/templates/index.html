@@ -119,32 +119,9 @@
     </div>
   </div>
 
-  <h3>Recent ticks</h3>
-  <table class="recent">
-    <thead>
-      <tr>
-        <th>time</th>
-        {% for ac in decision.acs %}<th>{{ ac.id }}</th>{% endfor %}
-        {% for r in decision.rooms %}<th>{{ r.room[:6] }}</th>{% endfor %}
-        <th>out</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in decision.recent %}
-      <tr>
-        <td>{{ row.timestamp[11:16] }}</td>
-        {% for ac in decision.acs %}
-          <td class="{{ 'on' if row['on_' ~ ac.id]=='1' else 'off' }}">
-            {{ '●' if row['on_' ~ ac.id]=='1' else '○' }}</td>
-        {% endfor %}
-        {% for r in decision.rooms %}
-          <td>{{ row['T_' ~ r.room] | half }}</td>
-        {% endfor %}
-        <td>{{ row.T_outdoor | half }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <h3>AC on/off &amp; room temps</h3>
+  <img class="onoff-plot" src="{{ url_for('ac_onoff_plot') }}?t={{ refreshed }}"
+       alt="AC on/off and room temperatures over the logged history">
   {% endif %}
 </section>
 </body>

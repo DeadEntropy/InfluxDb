@@ -45,9 +45,17 @@ def test_active_entry_latest_time_wins_and_midnight_wrap():
 
 
 # ── resolve_targets (NEXT_STEPS item 1: per-room scheduled band) ────────────
-def test_resolve_targets_honors_scheduled_room_band(control_config):
-    # Monday daytime → nicolas_office tightened to 74–76 by the weekday entry.
-    targets = sch.resolve_targets(control_config, MONDAY)
+def test_resolve_targets_honors_scheduled_room_band():
+    # A weekday-scoped entry tightens one room; on a weekday resolve_targets must
+    # surface that per-room band. Kept self-contained (not the live control_config
+    # fixture) so retuning a real band can't break this logic test —
+    # cf. test_resolve_targets_static_override_beats_schedule.
+    cfg = {"targets": {
+        "default":  {"min_f": 75, "max_f": 77},
+        "schedule": [{"name": "daytime", "time": "06:00", "days": "weekday",
+                      "rooms": {"nicolas_office": {"min_f": 74, "max_f": 76}}}],
+    }}
+    targets = sch.resolve_targets(cfg, MONDAY)                 # Monday = weekday
     assert targets["nicolas_office"] == {"min_f": 74, "max_f": 76}
 
 

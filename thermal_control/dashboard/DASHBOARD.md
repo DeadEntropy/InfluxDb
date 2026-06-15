@@ -51,8 +51,13 @@ are displayed rounded to the nearest **0.5 °F**.
   - **Header line** — outdoor temp, chosen-combo cost vs the cheapest
     alternative, `write_ok` health, last-tick time, and a STALE badge if the last
     tick is older than ~15 min.
-- **Recent-ticks table** (last ~12 rows) of AC states + key temps so recent
-  changes are visible at a glance.
+- **On/off + room-temps plot** — the same 3-panel figure the `live-analysis`
+  skill produces (`ac_onoff.png`): one panel per AC zone, the MPC on/off decision
+  as a step plot, every covered room's temperature on the right axis, and red/blue
+  breach markers. Rendered server-side from the shared
+  `thermal_control/analysis/onoff_plot.py` (per-tick ON/OFF text labels are
+  suppressed here to keep it readable) and served at `/plots/ac_onoff.png`,
+  regenerated only when the decision log changes.
 
 ## Data sources (all files)
 | File | Used for |

@@ -13,6 +13,7 @@ See DASHBOARD.md for the full description.
 import os
 import sys
 import csv
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -24,9 +25,10 @@ ROOT     = TC_DIR.parent
 sys.path.insert(0, str(ROOT))
 
 import yaml
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, Response, abort
 
 from thermal_control.control.schedule import resolve_targets
+from thermal_control.analysis.onoff_plot import make_onoff_plot
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # Overridable via env so the same image works locally (remote_logs/) and on the
@@ -310,8 +312,46 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
         "rooms": room_status,
         "cost_chosen": cost_chosen,
         "cheapest_alt": cheapest_alt,
-        "recent": list(reversed(rows)),   # newest first for the table
     }
+
+
+# ── On/off plot (reuses the live-analysis figure) ──────────────────────────────
+# Render the same 3-panel "AC on/off + room temps" PNG the live-analysis skill
+# produces (ac_onoff.png), served inline. Cached on the decision log's mtime so
+# the page's 30 s auto-refresh doesn't redraw an unchanged figure every time.
+_plot_cache = {"mtime": None, "png": None}
+
+
+def _load_decision_df():
+    """Whole decision log as a DataFrame with a tz-aware ET 'timestamp' column."""
+    import pandas as pd
+
+    df = pd.read_csv(DECISION_LOG)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert(TZ_NAME)
+    return df.sort_values("timestamp").reset_index(drop=True)
+
+
+def render_onoff_png(control_cfg):
+    """PNG bytes of the on/off figure, regenerated only when the log changes."""
+    mtime = DECISION_LOG.stat().st_mtime
+    if _plot_cache["mtime"] == mtime and _plot_cache["png"] is not None:
+        return _plot_cache["png"]
+
+    df = _load_decision_df()
+    buf = io.BytesIO()
+    # tick_labels=False → no per-tick ON/OFF text (too noisy at dashboard scale).
+    make_onoff_plot(df, control_cfg, buf, tick_labels=False)
+    png = buf.getvalue()
+    _plot_cache.update(mtime=mtime, png=png)
+    return png
+
+
+@app.route("/plots/ac_onoff.png")
+def ac_onoff_plot():
+    if not DECISION_LOG.exists():
+        abort(404)
+    png = render_onoff_png(load_yaml(CONTROL_YAML))
+    return Response(png, mimetype="image/png")
 
 
 # ── Route ─────────────────────────────────────────────────────────────────────
