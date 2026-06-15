@@ -92,23 +92,25 @@ targets:
       time: "06:00"
       days: weekday
       rooms:
-        nicolas_office: {min_f: 74, max_f: 76}
+        anna_office:    {min_f: 75, max_f: 79}
 
     - name: daytime             # weekends 07:30 → 15:00 (sleep in longer)
       time: "07:30"
       days: weekend
       rooms:
-        nicolas_office: {min_f: 74, max_f: 76}
+        anna_office:    {min_f: 75, max_f: 79}
 
     - name: early afternoon         # 15:00 → 16:30
       time: "15:15"
       days: weekday
       rooms: 
         nicolas_office: {min_f: 65, max_f: 85}
+        anna_office:    {min_f: 65, max_f: 85}
 
     - name: late afternoon         # 16:30 → 22:00
       time: "16:30"
-      rooms: {}
+      rooms: 
+        anna_office:    {min_f: 65, max_f: 85}
 
   # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:
