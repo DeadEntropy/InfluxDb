@@ -39,6 +39,7 @@ CONTROL_YAML = CONFIG_DIR / "control.yaml"
 HOUSE_YAML   = CONFIG_DIR / "house.yaml"
 DECISION_LOG = LOGS_DIR / "mpc_decision_log.csv"
 USER_INPUTS  = LOGS_DIR / "user_inputs.log"
+MPC_VERSION_FILE = LOGS_DIR / "mpc_version.txt"   # stamped by scheduler.py at startup
 
 WIDE_BAND = {"min_f": 65, "max_f": 85}   # the "don't care" band
 TZ_NAME   = "America/New_York"
@@ -354,6 +355,22 @@ def ac_onoff_plot():
     return Response(png, mimetype="image/png")
 
 
+# ── Build versions (footer) ────────────────────────────────────────────────────
+def build_versions():
+    """{'mpc': ..., 'dashboard': ...} — the git SHA each container was built from.
+
+    The dashboard knows its own build from the MPC_VERSION env baked into its
+    image; the MPC's build is read from the version file the scheduler stamps
+    into the shared logs dir (absent until a scheduler that writes it has run).
+    """
+    dashboard = os.environ.get("MPC_VERSION", "dev")
+    try:
+        mpc = MPC_VERSION_FILE.read_text().strip() or "unknown"
+    except OSError:
+        mpc = "unknown"
+    return {"mpc": mpc, "dashboard": dashboard}
+
+
 # ── Route ─────────────────────────────────────────────────────────────────────
 @app.route("/")
 def index():
@@ -384,6 +401,7 @@ def index():
         overrides=overrides,
         decision=decision_summary(control_cfg, house_cfg, rooms, ovr_map),
         refreshed=now.strftime("%H:%M:%S"),
+        versions=build_versions(),
     )
 
 

@@ -145,3 +145,19 @@ img.onoff-plot {
   border-radius: 4px;
   background: #fff;
 }
+
+/* ── footer (build versions) ───────────────────────────────── */
+footer {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+footer code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #c5ced9;
+}

@@ -65,6 +65,7 @@ SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 
 DECISION_LOG    = ROOT / "logs" / "mpc_decision_log.csv"
 USER_EVENT_LOG  = ROOT / "logs" / "user_inputs.log"
+VERSION_FILE    = ROOT / "logs" / "mpc_version.txt"   # read by the dashboard footer
 
 
 def _write_safe_setpoints(house):
@@ -322,7 +323,15 @@ def run():
 
     ha.check_sensor_units(house)
     logger.info("Thermal MPC scheduler started")
-    logger.info(f"Code version  : {os.environ.get('MPC_VERSION', 'dev (not containerized)')}")
+    mpc_version = os.environ.get("MPC_VERSION", "dev (not containerized)")
+    logger.info(f"Code version  : {mpc_version}")
+    # Stamp the version into the shared logs dir so the (separate) dashboard
+    # container can surface which MPC build is live. Best-effort: never fatal.
+    try:
+        VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        VERSION_FILE.write_text(mpc_version + "\n")
+    except OSError as exc:
+        logger.warning(f"could not write {VERSION_FILE.name}: {exc}")
     logger.info(f"Tick interval : {control['mpc']['tick_minutes']} min")
     logger.info(f"Horizon       : {control['mpc']['horizon_steps']} steps "
                 f"({control['mpc']['horizon_steps'] * control['mpc']['tick_minutes']} min)")
