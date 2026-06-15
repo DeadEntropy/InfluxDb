@@ -8,6 +8,14 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+{% if config_error %}
+<div class="config-error" role="alert">
+  <strong>⚠ Config error — live MPC is running on the last-good config.</strong>
+  <span class="ce-msg">{{ config_error.message }}</span>
+  {% if config_error.since %}<span class="ce-since">since {{ config_error.since }}</span>{% endif %}
+  <span class="ce-hint">Fix config/*.yaml on the server; this clears automatically once it validates.</span>
+</div>
+{% endif %}
 <header>
   <h1>MPC Thermal Dashboard</h1>
   <span class="muted">refreshed {{ refreshed }} · auto-refresh 30s</span>

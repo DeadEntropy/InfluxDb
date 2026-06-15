@@ -28,6 +28,7 @@ import yaml
 from flask import Flask, render_template, request, Response, abort
 
 from thermal_control.control.schedule import resolve_targets
+from thermal_control.control.config_check import validate_config_structure
 from thermal_control.analysis.onoff_plot import make_onoff_plot
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ HOUSE_YAML   = CONFIG_DIR / "house.yaml"
 DECISION_LOG = LOGS_DIR / "mpc_decision_log.csv"
 USER_INPUTS  = LOGS_DIR / "user_inputs.log"
 MPC_VERSION_FILE = LOGS_DIR / "mpc_version.txt"   # stamped by scheduler.py at startup
+ERROR_LOG    = LOGS_DIR / "errors.log"            # rejected config reloads (scheduler.py)
 
 WIDE_BAND = {"min_f": 65, "max_f": 85}   # the "don't care" band
 TZ_NAME   = "America/New_York"
@@ -355,6 +357,71 @@ def ac_onoff_plot():
     return Response(png, mimetype="image/png")
 
 
+# ── Live config-error banner ────────────────────────────────────────────────────
+def _last_error_log_time():
+    """
+    Wall-clock of the most recent errors.log entry (scheduler stamps these in
+    local ET), or None if the log is missing/empty/unparseable. Used only to
+    show *when* the current breakage was first logged — never to decide
+    liveness (that comes from re-validating the on-disk config below).
+    """
+    if not ERROR_LOG.exists():
+        return None
+    try:
+        with open(ERROR_LOG) as f:
+            lines = [ln for ln in f if ln.strip()]
+    except OSError:
+        return None
+    if not lines:
+        return None
+    try:
+        ts = datetime.strptime(lines[-1][:19], "%Y-%m-%d %H:%M:%S")
+        return ts.replace(tzinfo=ZoneInfo(TZ_NAME))
+    except (ValueError, IndexError):
+        return None
+
+
+# Last config that parsed + validated — what the live MPC is actually running
+# on. When a broken edit lands on disk the dashboard falls back to this (just
+# like the scheduler keeps its last-good config) and adds the banner.
+_last_good_cfg = {"control": None, "house": None}
+
+
+def resolve_page_config():
+    """
+    Load the config for a page render. Returns (control_cfg, house_cfg, error).
+
+    Liveness is decided by re-validating the on-disk yaml right now — the exact
+    check the scheduler runs before adopting an edit (yaml syntax → required
+    structure). When it passes, the config is used and cached as last-good and
+    error is None. When it fails, error = {message, since} and the page falls
+    back to the cached last-good config (the one the MPC is still running), so a
+    broken edit shows a banner without taking the whole dashboard down. The
+    moment the edit is fixed the next render validates clean and the banner
+    clears — regardless of what errors.log still records about past breakage.
+    """
+    try:
+        house = load_yaml(HOUSE_YAML)
+        control = load_yaml(CONTROL_YAML)
+        validate_config_structure(house, control)
+    except FileNotFoundError as exc:
+        message = f"Config file missing: {exc}"
+    except yaml.YAMLError as exc:
+        message = f"Invalid YAML syntax: {exc}"
+    except ValueError as exc:
+        message = str(exc)
+    except Exception as exc:                  # defensive: never let this break the page
+        message = f"{type(exc).__name__}: {exc}"
+    else:
+        _last_good_cfg["control"], _last_good_cfg["house"] = control, house
+        return control, house, None
+
+    since = _last_error_log_time()
+    error = {"message": message,
+             "since": since.strftime("%Y-%m-%d %H:%M") if since else None}
+    return _last_good_cfg["control"], _last_good_cfg["house"], error
+
+
 # ── Build versions (footer) ────────────────────────────────────────────────────
 def build_versions():
     """{'mpc': ..., 'dashboard': ...} — the git SHA each container was built from.
@@ -378,8 +445,21 @@ def index():
     if day_type not in ("weekday", "weekend"):
         day_type = "weekend" if datetime.now(ZoneInfo(TZ_NAME)).weekday() >= 5 else "weekday"
 
-    control_cfg = load_yaml(CONTROL_YAML)
-    house_cfg = load_yaml(HOUSE_YAML)
+    control_cfg, house_cfg, config_error = resolve_page_config()
+    now = datetime.now(ZoneInfo(TZ_NAME))
+
+    # Broken config on disk AND no last-good cached yet (dashboard started while
+    # the config was already broken). Show just the banner — nothing else can be
+    # resolved without a valid config.
+    if control_cfg is None or house_cfg is None:
+        return render_template(
+            "index.html",
+            config_error=config_error,
+            day_type=day_type, zones=[], hours=list(range(24)),
+            current_hour=None, grid={}, overrides=[], decision=None,
+            refreshed=now.strftime("%H:%M:%S"), versions=build_versions(),
+        )
+
     rooms = modelled_rooms(house_cfg)
     zones = ac_zones(house_cfg)
 
@@ -387,12 +467,12 @@ def index():
     ovr_map = override_map(overrides)
 
     # The "now" highlight only makes sense when the displayed day matches today.
-    now = datetime.now(ZoneInfo(TZ_NAME))
     showing_today = (now.weekday() >= 5) == (day_type == "weekend")
     current_hour = now.hour if showing_today else None
 
     return render_template(
         "index.html",
+        config_error=config_error,
         day_type=day_type,
         zones=zones,
         hours=list(range(24)),

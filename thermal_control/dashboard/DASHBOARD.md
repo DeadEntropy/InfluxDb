@@ -17,6 +17,19 @@ are displayed rounded to the nearest **0.5 °F**.
 
 ## What it shows
 
+### Config-error banner
+- A red banner pinned to the top of the page whenever the config **currently on
+  disk** (`control.yaml` / `house.yaml`) is invalid — broken YAML syntax or a
+  missing required key. This mirrors the scheduler: a bad edit is rejected and
+  the live MPC keeps running on its last-good config, so the dashboard falls back
+  to that same last-good config and just adds the banner (the rest of the page
+  keeps working).
+- Liveness is re-validated on every render with the shared
+  `control/config_check.py::validate_config_structure` — the **same** check the
+  scheduler runs before adopting an edit — so the banner clears the instant the
+  config is fixed, even though `errors.log` still records the past breakage.
+  `errors.log` (written by the scheduler) only supplies the "since" time.
+
 ### Section 1 — Schedule grid
 - One row per modelled room, grouped under its AC zone (bedroom_ac / living_ac /
   extension_ac), with 24 hourly columns (00:00–23:00).
@@ -66,6 +79,7 @@ are displayed rounded to the nearest **0.5 °F**.
 | `thermal_control/config/house.yaml`   | room list, AC-zone grouping |
 | `remote_logs/mpc_decision_log.csv`     | current + recent decisions, temps, costs |
 | `remote_logs/user_inputs.log`          | active overrides / presence events |
+| `remote_logs/errors.log`               | "since" time for the config-error banner |
 
 ## Where it reads the logs from
 

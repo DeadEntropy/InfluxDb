@@ -5,7 +5,9 @@ Main 10-minute MPC control loop.
 
 Every tick:
   0. Hot-reload config/*.yaml if edited on disk (volume-mounted in Docker);
-     a failed reload keeps the last-good config and never stops the loop
+     the edit is validated first — an invalid one (broken yaml or a missing
+     required key) is rejected, the last-good config is kept, the failure is
+     recorded in logs/errors.log, and the loop never stops
   1. Read all room temperatures from independent Zigbee sensors via HA REST API
   2. Read outdoor temperature from pool soffit sensor
   3. Solve bang-bang MPC over all 2³=8 AC combinations
@@ -47,6 +49,7 @@ from thermal_control.model.simulate      import HouseSimulator
 from thermal_control.control.mpc         import BangBangMPC
 from thermal_control.control.forecast    import build_outdoor_series
 from thermal_control.control.schedule    import resolve_targets_for_rooms, update_override_tracker
+from thermal_control.control.config_check import validate_config_structure as _validate_config_structure
 from thermal_control.ha_bridge           import controller as ha
 
 # ── Config ────────────────────────────────────────────────────────────────
@@ -66,6 +69,33 @@ SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 DECISION_LOG    = ROOT / "logs" / "mpc_decision_log.csv"
 USER_EVENT_LOG  = ROOT / "logs" / "user_inputs.log"
 VERSION_FILE    = ROOT / "logs" / "mpc_version.txt"   # read by the dashboard footer
+ERROR_LOG       = ROOT / "logs" / "errors.log"        # rejected config reloads land here
+
+
+def _make_config_error_logger():
+    """
+    Dedicated logger for rejected config hot-reloads, writing to errors.log.
+
+    Kept separate from the main INFO stream so an operator who edits a yaml on
+    the server has one file to tail for "did my edit take?". propagate=False so
+    these lines don't also flood stdout; the main logger still records a copy.
+    """
+    el = logging.getLogger("thermal_control.config_errors")
+    el.setLevel(logging.ERROR)
+    el.propagate = False
+    try:
+        ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(ERROR_LOG)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(message)s", "%Y-%m-%d %H:%M:%S"))
+        el.addHandler(handler)
+    except OSError as exc:
+        logger.warning(f"Could not open {ERROR_LOG}: {exc}")
+    return el
+
+
+config_error_logger = _make_config_error_logger()
+_last_reload_error_mtimes = None   # de-dupes repeated errors for one broken edit
 
 
 def _write_safe_setpoints(house):
@@ -144,24 +174,42 @@ def _maybe_reload(known_mtimes):
     Docker, editable on the server) and rebuild the simulator + MPC from
     the new config — also picking up any retrained weights in WEIGHTS_DIR.
 
-    Returns (house, control, sim, mpc, mtimes) on a successful reload,
-    None when nothing changed. Every failure (mid-edit YAML, transient
-    stat error, bad weights) is logged and swallowed so the running
-    controller keeps its last-good config; it retries next tick.
+    The edited config is validated (yaml syntax → required structure →
+    simulator/MPC build) BEFORE it replaces the live config. Returns
+    (house, control, sim, mpc, mtimes) on a successful, validated reload and
+    None otherwise. On any failure (mid-edit/broken yaml, missing key, bad
+    weights) the running controller keeps its last-good config; the failure is
+    recorded in errors.log and retried on the next edit.
     """
+    global _last_reload_error_mtimes
     try:
         mtimes = _config_mtimes()
-        if mtimes == known_mtimes:
-            return None
+    except OSError as exc:
+        logger.warning(f"Could not stat config files — keeping previous config: {exc}")
+        return None
+    if mtimes == known_mtimes:
+        return None
+
+    try:
         house, control = load_configs()
+        _validate_config_structure(house, control)
         sim = HouseSimulator(WEIGHTS_DIR, house)
         mpc = BangBangMPC(sim, house, control)
-        logger.info("Config change detected — reloaded house.yaml/control.yaml, "
-                    "rebuilt simulator and MPC")
-        return house, control, sim, mpc, mtimes
     except Exception as exc:
-        logger.error(f"Config reload failed — keeping previous config: {exc}")
+        msg = (f"Invalid config edit rejected — keeping previous live config "
+               f"({type(exc).__name__}: {exc})")
+        logger.error(msg)
+        # De-dupe: log each distinct broken edit to errors.log once, not on
+        # every tick it stays broken (mtimes are unchanged until the next save).
+        if mtimes != _last_reload_error_mtimes:
+            config_error_logger.error(msg)
+            _last_reload_error_mtimes = mtimes
         return None
+
+    _last_reload_error_mtimes = None
+    logger.info("Config change detected — validated and reloaded "
+                "house.yaml/control.yaml, rebuilt simulator and MPC")
+    return house, control, sim, mpc, mtimes
 
 
 def _input_signature(house, control):
@@ -302,7 +350,7 @@ def run():
 
     local_tz = ZoneInfo(house["location"]["timezone"])
     _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
-    for handler in logging.root.handlers:
+    for handler in logging.root.handlers + config_error_logger.handlers:
         if handler.formatter:
             handler.formatter.converter = _local_time
 

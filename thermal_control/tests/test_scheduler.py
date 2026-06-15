@@ -68,6 +68,54 @@ def test_maybe_reload_keeps_last_good_on_invalid_yaml(monkeypatch):
     assert sc._maybe_reload((0.0, 0.0)) is None            # failure swallowed → last-good kept
 
 
+# ── config integrity check (reject bad edits, log to errors.log) ────────────
+def test_validate_config_structure_accepts_real_config():
+    house, control = sc.load_configs()
+    sc._validate_config_structure(house, control)          # must not raise
+
+
+@pytest.mark.parametrize("mangle, needle", [
+    (lambda h, c: h.pop("rooms"),                  "rooms"),
+    (lambda h, c: h.pop("ac_units"),               "ac_units"),
+    (lambda h, c: h["location"].pop("timezone"),   "location.timezone"),
+    (lambda h, c: h.__setitem__("rooms", []),      "empty"),
+    (lambda h, c: c.pop("mpc"),                    "mpc"),
+    (lambda h, c: c["mpc"].pop("setpoint_on_f"),   "mpc.setpoint_on_f"),
+])
+def test_validate_config_structure_rejects_missing_keys(mangle, needle):
+    house, control = sc.load_configs()
+    mangle(house, control)
+    with pytest.raises(ValueError, match=needle):
+        sc._validate_config_structure(house, control)
+
+
+def test_validate_config_structure_rejects_non_mapping():
+    with pytest.raises(ValueError, match="house.yaml"):
+        sc._validate_config_structure(["not", "a", "dict"], {"mpc": {}})
+
+
+def test_maybe_reload_logs_invalid_edit_to_errors_log_once(monkeypatch):
+    """A rejected edit is recorded in errors.log exactly once per broken save."""
+    monkeypatch.setattr(sc, "_last_reload_error_mtimes", None)
+    monkeypatch.setattr(sc, "_config_mtimes", lambda: (1.0, 2.0))
+
+    real_load = sc.load_configs
+
+    def bad_config():
+        house, control = real_load()
+        house.pop("rooms")                                 # syntactically fine, structurally broken
+        return house, control
+    monkeypatch.setattr(sc, "load_configs", bad_config)
+
+    logged = []
+    monkeypatch.setattr(sc.config_error_logger, "error", lambda m: logged.append(m))
+
+    assert sc._maybe_reload((0.0, 0.0)) is None            # rejected → last-good kept
+    assert sc._maybe_reload((0.0, 0.0)) is None            # same broken mtimes again
+    assert len(logged) == 1                                # de-duped: logged only once
+    assert "rooms" in logged[0]
+
+
 # ── _write_safe_setpoints ───────────────────────────────────────────────────
 def test_write_safe_setpoints(monkeypatch, house_config):
     captured = {}
