@@ -70,16 +70,5 @@ Same three-panel layout, but time-windowed and extended:
 - **cost margin**: median well above `energy_weight` (0.05) means decisions are
   comfort-driven. Margins near 0.05 = energy-tie-breaking only.
 
-## Differences from shadow-analysis
-
-| | shadow-analysis | live-analysis |
-|---|---|---|
-| Log source | `shadow_run.py` | `scheduler.py` (live) |
-| Rows per tick | 1/min | 1/10 min |
-| Actual AC state logged | yes (`actual_action_*`) | no (MPC is in control) |
-| Agreement metric | MPC vs real thermostat | N/A |
-| Forward projection | no | yes (MPC vs all-off via HouseSimulator) |
-| Key question | Would MPC do better? | Is MPC behaving correctly? |
-
 Reference: skill developed and validated against the 2026-06-12 live run (07:22–15:30 ET).
 CLAUDE.md gotchas apply — everything in °F, don't read large CSVs whole.

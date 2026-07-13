@@ -70,13 +70,13 @@ ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.
   "cd /mnt/smarthome/thermal_controler && docker compose ps"
 ```
 
-Note which services are up. **Never start both `shadow` and `prod` at once** — if shadow is running, bring it down too. A running `dashboard` service is fine and expected — it's read-only and coexists with either prod or shadow; Step 6 just recreates it from the new image.
+Note which services are up. A running `dashboard` service is fine and expected — it's read-only and coexists with prod; Step 6 just recreates it from the new image.
 
 ## Step 4 — bring down the running containers
 
 ```bash
 ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
-  "cd /mnt/smarthome/thermal_controler && docker compose --profile prod down"
+  "cd /mnt/smarthome/thermal_controler && docker compose down"
 ```
 
 Wait for confirmation that the container stopped (the prod service has a 30 s grace period while it writes safe setpoints to the ACs — this is expected).
@@ -96,7 +96,7 @@ Start the controller first (the safety-critical service), then the dashboard.
 
 ```bash
 ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
-  "cd /mnt/smarthome/thermal_controler && docker compose --profile prod up -d prod"
+  "cd /mnt/smarthome/thermal_controler && docker compose up -d prod"
 ```
 
 Then bring the dashboard up. `up -d` recreates it from the freshly pulled image if it changed; it's read-only and profile-gated, so this never affects prod or the ACs:
@@ -135,17 +135,6 @@ ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.
 - dashboard: missing config/logs mount, or a port-8050 conflict
 
 The dashboard is non-critical: if **only** the dashboard is unhealthy, leave prod running, report the dashboard error, and don't roll prod back for it.
-
-## Deploying shadow mode instead
-
-If the user says "deploy shadow" or passes `shadow` as an argument:
-
-```bash
-ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.5.206 \
-  "cd /mnt/smarthome/thermal_controler && docker compose up shadow"
-```
-
-Shadow runs in the foreground for 24 h then exits — do **not** use `-d`. Tail the output live if the user wants to watch it.
 
 ## Safety notes
 

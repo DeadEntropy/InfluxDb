@@ -16,6 +16,5 @@ RUN pip install --no-cache-dir -r thermal_control/requirements.txt
 # Includes code, configs, and model weights — but NOT .env or logs.
 COPY . .
 
-# Safe default: shadow mode (log only, never writes setpoints).
-# docker-compose.yml overrides this with scheduler.py for the prod service.
-CMD ["python", "thermal_control/shadow_run.py"]
+# The live 10-min control loop — writes setpoints to the real ACs.
+CMD ["python", "thermal_control/scheduler.py"]

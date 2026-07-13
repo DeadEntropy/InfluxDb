@@ -68,10 +68,12 @@ also considered and rejected: `tick_minutes` must equal the model timestep (the
 RidgeCV models predict ΔT per 10-min step, training data is on a 10-min grid),
 so going to 5 min requires reprocessing + retraining — and a faster tick halves
 the minimum compressor cycle, making issue 14 worse. Agreed plan, in order:
-1. Measure first: 24h shadow run, check switches/AC/day (shadow-analysis skill,
-   decision-stability section) before adding mechanism.
-2. Anti-short-cycling guard (issue 14).
-3. Two-block enumeration (the proposed fix above).
+1. ~~Measure first: 24h shadow run~~ — done differently: measured directly from
+   the live `mpc_decision_log.csv` (flips/day, ON/OFF run-length distribution,
+   chosen-vs-runner-up cost margin) instead of a dedicated shadow run; shadow
+   mode has since been removed (its role is covered by the live decision log).
+2. Anti-short-cycling guard (issue 14) — done, see below.
+3. Two-block enumeration (the proposed fix above) — still open.
 
 ### 3. Simulator switches ACs on *room* sensor temps, not AC controller sensor temps
 - [ ] `model/simulate.py:54-68`
@@ -303,7 +305,7 @@ decision log (issue 11), and consider refitting after a few weeks — closed-loo
 operation will generate much richer excitation data than the historical logs.
 
 ### 14. No anti-short-cycling protection
-- [ ] `control/mpc.py` / `scheduler.py`
+- [x] `control/mpc.py` / `scheduler.py`
 
 Nothing prevents ON→OFF→ON every 10 minutes if costs hover near a tie (likely
 around band edges, see issue 2). Compressors dislike short cycles.
@@ -314,13 +316,23 @@ to combos that keep its current state. Optionally also a switching penalty
 `switch_weight · Σ|combo − previous_combo|` in the cost as a softer version.
 
 **Discussion 2026-06-12** — confirmed as the right place to fix chattering (see
-issue 2 addendum for the agreed order: shadow-run measurement first). A
+issue 2 addendum for the agreed order: live-log measurement first). A
 temperature-hysteresis alternative (cool to `target − 0.5°F` before releasing)
 was considered and rejected: it duplicates the deadband the comfort band already
 provides and fights the MPC's own optimisation. Hysteresis in *time* (min on/off
 or switching penalty) is what actually protects the compressor. Note the 10-min
 tick is currently the only de-facto short-cycling protection — revisit this
 issue before any change to `tick_minutes`.
+
+**Implemented 2026-07-13** — went with the switching-penalty variant:
+`control/mpc.py` adds `switch_penalty × hamming(combo, previous_combo)` as a
+selection-only bias (raw costs stay unpenalized in the log). Sized to 0.1 by
+retrospectively replaying `switch_penalty` against the logged per-combo raw
+costs (`cost_<binary>` columns) — roughly halves AC-level flips with worst-case
+regret well under 1°F. `decision_record()` now logs the effective
+`switch_penalty` per tick so this stays auditable after the fact. The hard
+minimum-on/off-time variant (first bullet of the proposed fix) is still open if
+the penalty alone proves insufficient.
 
 ### 15. Outdoor temperature fallbacks are weak
 - [ ] `scheduler.py:107, 129-135`

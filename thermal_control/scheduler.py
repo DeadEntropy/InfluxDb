@@ -113,13 +113,47 @@ def _write_safe_setpoints(house):
         logger.error(f"Failed to write safe setpoints on exit: {exc}")
 
 
+def _migrate_decision_log(new_fieldnames):
+    """
+    Roll the on-disk decision log onto a new schema: archive the existing file
+    with a timestamp suffix, then rebuild the live file under the new header,
+    replaying every old row (extra old columns dropped, new columns left blank
+    via DictWriter's default restval). Called by _append_decision_log when a
+    code change adds/removes a field, so history survives a schema change
+    instead of being corrupted (misaligned columns) or discarded.
+    """
+    archived = DECISION_LOG.with_name(
+        f"{DECISION_LOG.stem}.{datetime.now():%Y%m%dT%H%M%S}{DECISION_LOG.suffix}"
+    )
+    DECISION_LOG.rename(archived)
+    logger.warning(f"Decision log schema changed — archived previous log to "
+                    f"{archived.name}, migrating history to the new schema")
+
+    tmp = DECISION_LOG.with_suffix(DECISION_LOG.suffix + ".tmp")
+    with open(archived, newline="") as src, open(tmp, "w", newline="") as dst:
+        reader = csv.DictReader(src)
+        writer = csv.DictWriter(dst, fieldnames=new_fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in reader:
+            writer.writerow(row)
+    tmp.replace(DECISION_LOG)
+
+
 def _append_decision_log(record):
     """Append one row to the CSV decision log, creating the file if needed."""
     try:
         DECISION_LOG.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = list(record.keys())
+
+        if DECISION_LOG.exists():
+            with open(DECISION_LOG, newline="") as f:
+                existing_header = next(csv.reader(f), None)
+            if existing_header is not None and existing_header != fieldnames:
+                _migrate_decision_log(fieldnames)
+
         write_header = not DECISION_LOG.exists()
         with open(DECISION_LOG, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(record.keys()))
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             if write_header:
                 writer.writeheader()
             writer.writerow(record)

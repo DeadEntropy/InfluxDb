@@ -310,6 +310,10 @@ class BangBangMPC:
           cost_chosen       cost of the chosen combination
           cost_<binary>     cost for each of the 8 combinations, keyed by
                             a 3-bit string e.g. "010" (bed=0,liv=1,ext=0)
+          switch_penalty    the switch_penalty value in effect this tick (raw
+                            costs above are unaffected by it — this column is
+                            what lets a later analysis reconstruct which combo
+                            the penalty would have changed, if any)
           proj_<room>       predicted temperature at horizon end (°F)
         """
         if not hasattr(self, "_last_results"):
@@ -325,6 +329,7 @@ class BangBangMPC:
             record[f"sp_{ac}"]  = self.sp_on if on else self.sp_off
 
         record["cost_chosen"] = round(self._best_cost, 4)
+        record["switch_penalty"] = self.switch_penalty
 
         for combo, _, cost, _ in self._last_results:
             key = "".join(str(c) for c in combo)

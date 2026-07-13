@@ -29,11 +29,10 @@ python thermal_control/model/simulate.py             # validation (Pass 1 + Pass
 
 # Run modes:
 python thermal_control/dry_run.py      # one MPC solve, print decision, write nothing
-python thermal_control/shadow_run.py   # 24h loop: log MPC decisions vs real thermostats, write nothing
 python thermal_control/scheduler.py    # LIVE 10-min control loop — writes setpoints to real ACs
 ```
 
-**Deployment** (one Docker image, shadow or prod mode, run on a remote server — see `BUILD_HELP.bat`):
+**Deployment** (one Docker image, run on a remote server — see `BUILD_HELP.bat`):
 
 ```bash
 # BUILD_HELP.bat builds and pushes two tags: :latest and :<git-sha>. The sha is
@@ -42,22 +41,19 @@ docker build --no-cache -f Dockerfile.mpc --build-arg GIT_SHA=$(git describe --a
   -t deadentropy/mpc-thermal:$(git describe --always --dirty) -t deadentropy/mpc-thermal:latest .
 docker push --all-tags deadentropy/mpc-thermal
 # on the server (logs land in thermal_control/logs/); MPC_TAG=<git-sha> pins a version:
-docker compose up shadow                   # shadow: log only, writes nothing, exits after 24h
-docker compose --profile prod up -d prod   # PROD: writes setpoints to the real ACs
+docker compose up -d   # PROD (default): writes setpoints to the real ACs
 ```
 
-The image's default CMD is shadow mode; the `prod` compose service overrides it with
-`scheduler.py` and is profile-gated so a bare `docker compose up` never starts the live
-controller. Never run both services at once.
+The image's default CMD — and `docker compose up` with no service/profile — is the live
+`scheduler.py` control loop; it writes real setpoints from the first tick.
 
 `config/` and `model/weights/` are volume-mounted read-only over the baked-in copies,
-so bands/parameters/weights can be edited on the server without a rebuild: the prod
-scheduler hot-reloads the yaml on its next tick (invalid yaml is skipped, last-good
-config kept); shadow picks changes up on its next start.
+so bands/parameters/weights can be edited on the server without a rebuild: the scheduler
+hot-reloads the yaml on its next tick (invalid yaml is skipped, last-good config kept).
 
 The root `Dockerfile` is unrelated — it's the JupyterLab devcontainer image.
 
-To analyze a shadow-run log, use the `shadow-analysis` skill (`.claude/skills/shadow-analysis/`) rather than ad-hoc pandas.
+To analyze a live decision log, use the `live-analysis` skill (`.claude/skills/live-analysis/`) rather than ad-hoc pandas.
 
 ## Environment / secrets
 
@@ -69,7 +65,7 @@ To analyze a shadow-run log, use the `shadow-analysis` skill (`.claude/skills/sh
 
 Data flow: `preprocess/` (CSV cleaning → `train.csv`/`val.csv`) → `model/fit.py` (one RidgeCV per room, saved to `model/weights/` as joblib + `feature_lists.json`) → `model/simulate.py` exposes `HouseSimulator`, the forward simulator reused at runtime.
 
-Runtime loop (`scheduler.py` / `shadow_run.py` / `dry_run.py`):
+Runtime loop (`scheduler.py` / `dry_run.py`):
 - `ha_bridge/controller.py` — the only Home Assistant touchpoint (REST API, reads sensors, writes setpoints).
 - `control/schedule.py` — resolves time-of-day comfort bands from `config/control.yaml` (wide band 65–85°F = "MPC ignores this room").
 - `control/forecast.py` — outdoor temperature series for the horizon (Open-Meteo forecast optional via `use_forecast`).
@@ -86,4 +82,4 @@ Configuration is data, not code: `config/house.yaml` (rooms, sensor entities, AC
 - Sensor data quality: −58°F sentinel = offline sensor; ≥8 h of identical readings = dead battery (stale). Both are filtered in `preprocess/`.
 - Dates in this project run through 2026; the training overlap window is May 2025 – Jun 2026.
 - `thermal_control/CODE_REVIEW.md` is a point-in-time review of `scheduler.py`/`shadow_run.py` — check it before re-reviewing that code.
-- Large generated files live at the root (`homeassistant_*.csv`, `shadow.csv`, notebooks) — avoid reading them whole; sample with pandas instead.
+- Large generated files live at the root (`homeassistant_*.csv`, notebooks) — avoid reading them whole; sample with pandas instead.

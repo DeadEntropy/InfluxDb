@@ -180,8 +180,7 @@ started_at)}` tracker across ticks and emits `activated`/`changed`/`expired`/`ca
 (a changed value restarts the timer). `schedule.resolve_targets_for_rooms(overrides=…)` shifts
 both bounds of the resolved band — **beating presence** (an explicit request conditions the room)
 but **yielding to away mode**. The prod scheduler reads, tracks, applies, and resets expired
-sliders to 0; `shadow_run.py` tracks + applies but never writes (so expired sliders aren't reset
-in shadow); `dry_run.py` shows any non-zero slider as active without the duration lifecycle.
+sliders to 0; `dry_run.py` shows any non-zero slider as active without the duration lifecycle.
 Transition events go to the logger; the structured `user_inputs.log` trail is item 10 (now done). Note
 the precedence is now away > override > presence > static > schedule > default.
 
@@ -305,9 +304,8 @@ climate:
   resolve the base scheduled band first (for `S_now`/`W`), detect edits via `T_read !=
   last_written`, push `S_now` on schedule transitions and on expiry. Log the override as an
   absolute `→ 79°F` target, not a `+2°F` shift.
-- **`shadow_run.py` / `dry_run.py`** — shadow tracks+applies but **never writes**, so it can't
-  sync the card or revert it on expiry (read-only, by design — note this asymmetry: shadow
-  can't show the schedule on the card). dry_run shows any active target without the lifecycle.
+- **`dry_run.py`** — shows any active target without the duration lifecycle (no writes, so no
+  card sync/revert).
 - **`scheduler._input_signature()` (the item-7a responsive sleep)** — **must be updated too**:
   it currently polls `get_overrides`; point it at `get_room_targets` so the ~20-s early-wake
   still fires when the user drags the card. Compare the poll against `last_written` so the
@@ -360,8 +358,8 @@ cards:
 W}`. `scheduler.py` carries `card_synced` per room and runs the write-back sync via two pure
 helpers — `_plan_card_detection` (first-tick seed / away-pin / edit-detect) and
 `_plan_card_revert` (resync on schedule transition, revert on expiry/cancel); the item-7a
-responsive-sleep `_input_signature` now polls `get_room_targets`. `shadow_run.py`/`dry_run.py`
-use a stateless "card ≠ scheduled max ⇒ override" (no writes, so no duration/expiry). Tests in
+responsive-sleep `_input_signature` now polls `get_room_targets`. `dry_run.py`
+uses a stateless "card ≠ scheduled max ⇒ override" (no writes, so no duration/expiry). Tests in
 `tests/test_controller.py`, `tests/test_schedule.py`, `tests/test_scheduler.py` updated/added.
 **Startup caveat:** on scheduler start the cards are reset to the current schedule value
 (seeding `card_synced`), so any override left on a card across a restart is discarded.
@@ -416,9 +414,8 @@ boolean and **fails safe to "home"** (normal schedule) on any read error or miss
 flaky helper never strands the house warm. `schedule.resolve_targets_for_rooms(..., away=True)`
 substitutes the away band for every room, beating the schedule and static overrides (`away` is
 also reserved in `resolve_targets` so the block isn't mistaken for a per-room override).
-`scheduler.py`, `shadow_run.py`, and `dry_run.py` all read the flag each tick. ON/OFF
-*transitions* are logged via the normal logger; the shadow log records `active_schedule=away`
-(a value change on an existing column, not a new one). `mpc_decision_log.csv` is deliberately left
+`scheduler.py` and `dry_run.py` read the flag each tick. ON/OFF
+*transitions* are logged via the normal logger. `mpc_decision_log.csv` is deliberately left
 unchanged — adding a column would give new rows more fields than the existing server log's header
 and break the live-analysis pandas read. The structured per-tick audit trail (`user_inputs.log`) is
 item 10 (now done). Presence-sensor precedence (item 9) is documented but item 9 isn't built
@@ -487,7 +484,7 @@ is declared under nicolas_office in `house.yaml` (only that room for now).
 `presence_entity`, **failing safe to occupied** on any read error or `unavailable`/`unknown`
 state. `schedule.resolve_targets_for_rooms(..., unoccupied=…)` drops each empty room to the wide
 `WIDE_BAND` (65–85°F), overriding the schedule/static band but yielding to away mode (when away,
-presence is not even read). `scheduler.py`, `shadow_run.py`, and `dry_run.py` read presence each
+presence is not even read). `scheduler.py` and `dry_run.py` read presence each
 tick and log per-room occupied/UNOCCUPIED transitions via the normal logger. As with item 8, no
 `mpc_decision_log.csv` column is added (would break the existing log header / live-analysis read); the
 structured `user_inputs.log` trail is item 10 (now done). Rooms without a `presence_entity` are

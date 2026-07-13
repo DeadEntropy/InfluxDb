@@ -145,3 +145,4 @@ def test_decision_record_columns(mpc):
     assert "cost_chosen" in rec
     # one cost_<3bit> column per enumerated combo
     assert sum(1 for k in rec if k.startswith("cost_") and k != "cost_chosen") == 8
+    assert rec["switch_penalty"] == mpc.switch_penalty

@@ -1,4 +1,4 @@
-"""Tests for the entry-point helpers in scheduler.py and shadow_run.py."""
+"""Tests for the entry-point helpers in scheduler.py."""
 
 import csv
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from thermal_control import scheduler as sc
-from thermal_control import shadow_run as sr
 
 
 # ── fill_missing (KEY FEATURE: stale-sensor caching + cost exclusion) ───────
@@ -25,14 +24,6 @@ def test_fill_missing_fresh_cached_stale_and_never_seen():
     assert missing == {"c", "d"}                           # stale + never-seen excluded
     assert "a" not in missing and "b" not in missing       # fresh data steers cost
     assert cache["a"][0] == 75.0                           # fresh reading cached
-
-
-def test_shadow_fill_missing_matches_scheduler():
-    """shadow_run.fill_missing carries the same contract as scheduler's."""
-    now = datetime.now(timezone.utc)
-    filled, missing = sr.fill_missing({"a": 75.0}, {}, ["a", "b"], 74.0)
-    assert filled == {"a": 75.0, "b": 74.0}
-    assert missing == {"b"}
 
 
 # ── load_configs / _config_mtimes ───────────────────────────────────────────
@@ -136,6 +127,24 @@ def test_append_decision_log_writes_header_then_row(monkeypatch, tmp_path):
     assert rows == [{"a": "1", "b": "2"}, {"a": "3", "b": "4"}]
 
 
+def test_append_decision_log_migrates_on_schema_change(monkeypatch, tmp_path):
+    log = tmp_path / "mpc_decision_log.csv"
+    monkeypatch.setattr(sc, "DECISION_LOG", log)
+    sc._append_decision_log({"a": 1, "b": 2})
+    sc._append_decision_log({"a": 1, "c": 3})   # schema changed: "b" replaced by "c"
+
+    archived = [p for p in tmp_path.iterdir() if p != log]
+    assert len(archived) == 1
+    old_rows = list(csv.DictReader(archived[0].open()))
+    assert old_rows == [{"a": "1", "b": "2"}]      # untouched under the old header
+
+    new_rows = list(csv.DictReader(log.open()))
+    assert new_rows == [
+        {"a": "1", "c": ""},    # migrated: "b" dropped, "c" blank (never had a value)
+        {"a": "1", "c": "3"},   # new row, fully populated under the new schema
+    ]
+
+
 # ── thermostat card sync/detection (NEXT_STEPS item 7b) ─────────────────────
 def test_plan_card_detection_seeds_then_detects_edit():
     display = {"kitchen": 77, "family_room": 76}
@@ -184,12 +193,3 @@ def test_plan_card_revert_resyncs_and_reverts():
         card_synced={"kitchen": 77}, effective={},
     )
     assert writes == {"kitchen": 77}                 # reverted to schedule
-
-
-# ── shadow_run.append_row ───────────────────────────────────────────────────
-def test_shadow_append_row(monkeypatch, tmp_path):
-    log = tmp_path / "shadow.csv"
-    monkeypatch.setattr(sr, "SHADOW_LOG", log)
-    sr.append_row({"x": 10, "y": 20})
-    rows = list(csv.DictReader(log.open()))
-    assert rows == [{"x": "10", "y": "20"}]
