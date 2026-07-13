@@ -13,9 +13,9 @@ See DASHBOARD.md for the full description.
 import os
 import sys
 import csv
-import io
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 # thermal_control.* imports (mirrors the other entry points)
@@ -25,11 +25,12 @@ ROOT     = TC_DIR.parent
 sys.path.insert(0, str(ROOT))
 
 import yaml
-from flask import Flask, render_template, request, Response, abort
+from flask import Flask, render_template, request, Response, abort, jsonify
+import plotly.offline as plotly_offline
 
-from thermal_control.control.schedule import resolve_targets
+from thermal_control.control.schedule import resolve_targets, resolve_targets_for_rooms
 from thermal_control.control.config_check import validate_config_structure
-from thermal_control.analysis.onoff_plot import make_onoff_plot
+from thermal_control.analysis.onoff_plot import AC_UNITS, AC_ROOMS
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 # Overridable via env so the same image works locally (remote_logs/) and on the
@@ -47,7 +48,33 @@ WIDE_BAND = {"min_f": 65, "max_f": 85}   # the "don't care" band
 TZ_NAME   = "America/New_York"
 STALE_MINUTES = 15                       # tick older than this → staleness warning
 
+# Distinct per-room line colors for the on/off charts, assigned by each room's
+# position in AC_ROOMS[ac] (max 3 rooms/panel) — cycles if a zone ever grows.
+ROOM_COLORS = ["#4aa3ff", "#ffb454", "#3fd67a", "#ff6b6b", "#c792ea", "#5eead4"]
+
 app = Flask(__name__)
+
+# Plotly's bundled JS, served locally (no CDN) so the dashboard stays fully
+# self-contained/offline — sourced from the pinned `plotly` dependency itself,
+# not checked into the repo. Built once at import time (~4.8MB).
+_PLOTLYJS = plotly_offline.get_plotlyjs().encode("utf-8")
+
+
+@app.route("/vendor/plotly.min.js")
+def plotly_js():
+    return Response(_PLOTLYJS, mimetype="application/javascript",
+                     headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+@app.template_global()
+def qs_with(**overrides):
+    """Current query string with the given keys overridden/removed (None or ''
+    removes). Lets toggles (day, range, start, end) compose independently —
+    switching one preserves the others instead of resetting the whole page."""
+    params = request.args.to_dict()
+    params.update(overrides)
+    params = {k: v for k, v in params.items() if v not in (None, "")}
+    return "?" + urlencode(params)
 
 
 @app.template_filter("half")
@@ -318,11 +345,15 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
     }
 
 
-# ── On/off plot (reuses the live-analysis figure) ──────────────────────────────
-# Render the same 3-panel "AC on/off + room temps" PNG the live-analysis skill
-# produces (ac_onoff.png), served inline. Cached on the decision log's mtime so
-# the page's 30 s auto-refresh doesn't redraw an unchanged figure every time.
-_plot_cache = {"mtime": None, "png": None}
+# ── On/off plot data (rendered client-side with Plotly) ────────────────────────
+PLOT_RANGES = ("1d", "3d", "1w", "1m", "all", "custom")
+DEFAULT_RANGE = "1d"
+RANGE_DELTAS = {
+    "1d": timedelta(days=1),
+    "3d": timedelta(days=3),
+    "1w": timedelta(weeks=1),
+    "1m": timedelta(days=30),
+}
 
 
 def _load_decision_df():
@@ -334,27 +365,166 @@ def _load_decision_df():
     return df.sort_values("timestamp").reset_index(drop=True)
 
 
-def render_onoff_png(control_cfg):
-    """PNG bytes of the on/off figure, regenerated only when the log changes."""
-    mtime = DECISION_LOG.stat().st_mtime
-    if _plot_cache["mtime"] == mtime and _plot_cache["png"] is not None:
-        return _plot_cache["png"]
-
-    df = _load_decision_df()
-    buf = io.BytesIO()
-    # tick_labels=False → no per-tick ON/OFF text (too noisy at dashboard scale).
-    make_onoff_plot(df, control_cfg, buf, tick_labels=False)
-    png = buf.getvalue()
-    _plot_cache.update(mtime=mtime, png=png)
-    return png
+def _latest_decision_ts():
+    """Timestamp of the most recent decision-log row, or None if the log is empty."""
+    rows = read_decision_rows(1)
+    if not rows:
+        return None
+    try:
+        return parse_ts(rows[-1]["timestamp"])
+    except (ValueError, KeyError):
+        return None
 
 
-@app.route("/plots/ac_onoff.png")
-def ac_onoff_plot():
-    if not DECISION_LOG.exists():
+def _parse_local_dt(s):
+    """Parse a datetime-local input value ('YYYY-MM-DDTHH:MM') as ET; None if unparseable."""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(TZ_NAME))
+    return dt
+
+
+def resolve_plot_range(range_code, start_str, end_str, latest_ts):
+    """
+    Resolve the requested plot window to (range_code, start, end) — start/end
+    are tz-aware datetimes, or (None, None) for "all" (no filtering).
+
+    Falls back to DEFAULT_RANGE when the code is unrecognized, or when "custom"
+    is missing/has unparseable start/end — never raises on bad query input.
+    """
+    if range_code == "all":
+        return "all", None, None
+
+    if range_code == "custom":
+        start, end = _parse_local_dt(start_str), _parse_local_dt(end_str)
+        if start and end:
+            if start > end:
+                start, end = end, start
+            return "custom", start, end
+        range_code = DEFAULT_RANGE
+
+    if range_code not in RANGE_DELTAS:
+        range_code = DEFAULT_RANGE
+    if latest_ts is None:
+        return range_code, None, None
+    return range_code, latest_ts - RANGE_DELTAS[range_code], latest_ts
+
+
+def _filter_range(df, start, end):
+    if start is not None:
+        df = df[df["timestamp"] >= start]
+    if end is not None:
+        df = df[df["timestamp"] <= end]
+    return df.reset_index(drop=True)
+
+
+def _room_color(room, ac):
+    idx = AC_ROOMS.get(ac, []).index(room)
+    return ROOM_COLORS[idx % len(ROOM_COLORS)]
+
+
+def _away_intervals():
+    """[(start, end), ...] tz-aware ET datetimes when away/holiday mode (item
+    8) was active, reconstructed from away_activated/away_deactivated events
+    in user_inputs.log. A still-open period (no matching deactivated event
+    yet) gets end=now."""
+    if not USER_INPUTS.exists():
+        return []
+    events = []
+    with open(USER_INPUTS, newline="") as f:
+        for row in csv.DictReader(f):
+            event = (row.get("event") or "").strip()
+            if event not in ("away_activated", "away_deactivated"):
+                continue
+            try:
+                ts = parse_ts(row["timestamp"])
+            except (ValueError, KeyError):
+                continue
+            events.append((ts, event))
+    events.sort(key=lambda e: e[0])
+
+    intervals = []
+    start = None
+    for ts, event in events:
+        if event == "away_activated" and start is None:
+            start = ts
+        elif event == "away_deactivated" and start is not None:
+            intervals.append((start, ts))
+            start = None
+    if start is not None:
+        intervals.append((start, datetime.now(ZoneInfo(TZ_NAME))))
+    return intervals
+
+
+def _is_away(intervals, ts):
+    return any(start <= ts <= end for start, end in intervals)
+
+
+def _room_series(df, control_cfg, ac):
+    """[{id, label, color, temp, band_lo, band_hi}, ...] for the rooms this AC
+    covers that have a temperature column in df. band_lo/band_hi are the
+    comfort band actually in effect at each row's own timestamp (piecewise
+    constant) — schedule-resolved, except during a logged away/holiday period,
+    when every room gets the away band instead (mirrors what the MPC actually
+    targeted at that moment; reconstructed from user_inputs.log since away
+    isn't itself a decision-log column)."""
+    room_ids = [r for r in AC_ROOMS.get(ac, []) if f"T_{r}" in df.columns]
+    if not room_ids:
+        return []
+
+    away_intervals = _away_intervals()
+    resolved = [
+        resolve_targets_for_rooms(control_cfg, room_ids, ts, away=_is_away(away_intervals, ts))
+        for ts in df["timestamp"]
+    ]
+
+    out = []
+    for room in room_ids:
+        col = df[f"T_{room}"]
+        lo = [r[room]["min_f"] for r in resolved]
+        hi = [r[room]["max_f"] for r in resolved]
+        out.append({
+            "id": room,
+            "label": room.replace("_", " "),
+            "color": _room_color(room, ac),
+            "temp": [None if v != v else round(float(v), 2) for v in col],  # v!=v → NaN
+            "band_lo": lo,
+            "band_hi": hi,
+        })
+    return out
+
+
+@app.route("/plots/onoff_data.json")
+def onoff_data():
+    ac = request.args.get("ac")
+    if ac not in AC_UNITS:
         abort(404)
-    png = render_onoff_png(load_yaml(CONTROL_YAML))
-    return Response(png, mimetype="image/png")
+    if not DECISION_LOG.exists():
+        return jsonify({"ac": ac, "range": DEFAULT_RANGE, "timestamps": [], "on": [], "rooms": []})
+
+    range_code, start, end = resolve_plot_range(
+        request.args.get("range", DEFAULT_RANGE),
+        request.args.get("start"), request.args.get("end"),
+        _latest_decision_ts(),
+    )
+    df = _filter_range(_load_decision_df(), start, end)
+    on_col = f"on_{ac}"
+    if df.empty or on_col not in df.columns:
+        return jsonify({"ac": ac, "range": range_code, "timestamps": [], "on": [], "rooms": []})
+
+    control_cfg, _, _ = resolve_page_config()
+    return jsonify({
+        "ac": ac,
+        "range": range_code,
+        "timestamps": [ts.isoformat() for ts in df["timestamp"]],
+        "on": [int(v) for v in df[on_col]],
+        "rooms": _room_series(df, control_cfg, ac),
+    })
 
 
 # ── Live config-error banner ────────────────────────────────────────────────────
@@ -445,6 +615,12 @@ def index():
     if day_type not in ("weekday", "weekend"):
         day_type = "weekend" if datetime.now(ZoneInfo(TZ_NAME)).weekday() >= 5 else "weekday"
 
+    range_code = request.args.get("range", DEFAULT_RANGE)
+    if range_code not in PLOT_RANGES:
+        range_code = DEFAULT_RANGE
+    range_start_raw = request.args.get("start", "")
+    range_end_raw = request.args.get("end", "")
+
     control_cfg, house_cfg, config_error = resolve_page_config()
     now = datetime.now(ZoneInfo(TZ_NAME))
 
@@ -457,6 +633,8 @@ def index():
             config_error=config_error,
             day_type=day_type, zones=[], hours=list(range(24)),
             current_hour=None, grid={}, overrides=[], decision=None,
+            range_code=range_code, range_start_raw=range_start_raw,
+            range_end_raw=range_end_raw, ac_units=AC_UNITS,
             refreshed=now.strftime("%H:%M:%S"), versions=build_versions(),
         )
 
@@ -480,6 +658,8 @@ def index():
         grid=schedule_grid(control_cfg, rooms, day_type, current_hour, ovr_map),
         overrides=overrides,
         decision=decision_summary(control_cfg, house_cfg, rooms, ovr_map),
+        range_code=range_code, range_start_raw=range_start_raw,
+        range_end_raw=range_end_raw, ac_units=AC_UNITS,
         refreshed=now.strftime("%H:%M:%S"),
         versions=build_versions(),
     )

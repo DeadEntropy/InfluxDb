@@ -27,6 +27,14 @@ header {
   border-bottom: 1px solid var(--line);
 }
 header h1 { font-size: 18px; margin: 0; }
+.auto-refresh-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  cursor: pointer;
+}
+.auto-refresh-toggle input[type="checkbox"] { accent-color: var(--accent); }
 
 h2 { font-size: 16px; margin: 0 0 12px; }
 h3 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -135,15 +143,101 @@ table.grid td.now-col {
 .off { color: var(--muted); }
 
 /* ── on/off plot ───────────────────────────────────────────── */
-img.onoff-plot {
-  display: block;
-  width: 100%;
-  max-width: 1100px;
-  height: auto;
+.plot-wrap {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
   margin-top: 6px;
+}
+
+.plot-controls {
+  flex: 0 0 130px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.plot-controls a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: center;
+}
+.plot-controls a.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.custom-range {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.custom-range label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.custom-range input[type="datetime-local"] {
+  background: var(--panel);
+  color: var(--text);
   border: 1px solid var(--line);
   border-radius: 4px;
-  background: #fff;
+  padding: 3px 4px;
+  font-size: 12px;
+  color-scheme: dark;
+}
+.custom-range button {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.custom-range button.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+.ac-panels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ac-panel {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px 4px;
+}
+
+.ac-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.ac-panel-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text);
+  margin-right: auto;
+}
+.plotly-chart {
+  min-height: 300px;
+}
+.plot-empty {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ── footer (build versions) ───────────────────────────────── */

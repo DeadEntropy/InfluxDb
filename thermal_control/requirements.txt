@@ -10,3 +10,4 @@ matplotlib
 python-dotenv
 pytest
 flask
+plotly

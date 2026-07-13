@@ -175,3 +175,17 @@ def make_onoff_plot(df, cfg, plot_path, tick_labels=True):
     plt.tight_layout()
     fig.savefig(plot_path, dpi=130, bbox_inches="tight")
     plt.close(fig)
+
+
+def make_placeholder_plot(plot_path, message="No data in the selected time range"):
+    """Small PNG shown in place of the on/off figure when a selected time
+    window has no decision-log rows (e.g. a custom range with no overlap)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(14, 3))
+    ax.text(0.5, 0.5, message, ha="center", va="center", fontsize=13, color="#888888")
+    ax.axis("off")
+    fig.savefig(plot_path, dpi=130, bbox_inches="tight")
+    plt.close(fig)

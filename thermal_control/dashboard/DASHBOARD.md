@@ -64,13 +64,33 @@ are displayed rounded to the nearest **0.5 °F**.
   - **Header line** — outdoor temp, chosen-combo cost vs the cheapest
     alternative, `write_ok` health, last-tick time, and a STALE badge if the last
     tick is older than ~15 min.
-- **On/off + room-temps plot** — the same 3-panel figure the `live-analysis`
-  skill produces (`ac_onoff.png`): one panel per AC zone, the MPC on/off decision
-  as a step plot, every covered room's temperature on the right axis, and red/blue
-  breach markers. Rendered server-side from the shared
-  `thermal_control/analysis/onoff_plot.py` (per-tick ON/OFF text labels are
-  suppressed here to keep it readable) and served at `/plots/ac_onoff.png`,
-  regenerated only when the decision log changes.
+- **On/off + room-temps plots** — one interactive Plotly chart per AC zone
+  (bedroom/living/extension). AC on/off is always shown as a thick red/blue
+  strip along the bottom (blue = on, red = off) so it doesn't dominate the
+  temperature lines. Each room's temperature (distinct color per room) is
+  plotted on the right-hand °F axis; clicking a room in the legend hides/shows
+  its temp line together with its target-range band (same color, two dotted
+  lines — the piecewise-constant upper/lower bound, not filled). A left-hand
+  control panel (1D/3D/1W/1M/ALL/Custom) picks the time window shown across
+  all three panels.
+  Band values are resolved per-row with the same `resolve_targets_for_rooms()`
+  the live MPC uses (`thermal_control/control/schedule.py`), so weekday/
+  weekend schedule entries and (item 8) away/holiday mode are both correct for
+  that row's actual historical moment — away periods are reconstructed from
+  `away_activated`/`away_deactivated` events in `user_inputs.log`, since away
+  isn't itself a decision-log column. Manual overrides and presence-based
+  "unoccupied" bands are *not* reconstructed historically (only away is), so a
+  room that was under an active override or briefly unoccupied at some past
+  tick will show its plain scheduled band there instead.
+  Data comes from `GET /plots/onoff_data.json?ac=<id>&range=...` (JSON);
+  rendering happens client-side in `static/plots.js` so switching the range or
+  toggling a room never reloads the page. Plotly.js itself is served locally
+  at `/vendor/plotly.min.js` (sourced from the pinned `plotly` pip package,
+  not a CDN) so the dashboard stays fully self-contained/offline.
+  The static matplotlib version of this figure (3 panels in one PNG, with
+  breach markers, schedule-only bands) still exists in `onoff_plot.py` as
+  `make_onoff_plot` — it's what the `live-analysis` skill uses for its offline
+  `ac_onoff.png`, just no longer wired into this page.
 
 ## Data sources (all files)
 | File | Used for |

@@ -7,7 +7,9 @@ than read from a sticky errors.log entry.
 """
 
 import shutil
+from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -16,6 +18,7 @@ from thermal_control.dashboard import app as dash
 ROOT         = Path(__file__).resolve().parent.parent       # thermal_control/
 GOOD_HOUSE   = ROOT / "config" / "house.yaml"
 GOOD_CONTROL = ROOT / "config" / "control.yaml"
+TZ           = ZoneInfo(dash.TZ_NAME)
 
 
 @pytest.fixture
@@ -99,3 +102,152 @@ def test_index_renders_banner_when_broken(dash_paths):
     html = dash.app.test_client().get("/").get_data(as_text=True)
     assert "config-error" in html                         # banner div present
     assert "Schedule the MPC sees" in html                # rest of page still renders
+
+
+# ── Plot time-range selector (resolve_plot_range / _filter_range) ─────────────
+
+def test_resolve_plot_range_presets():
+    latest = datetime(2026, 7, 13, 12, 0, tzinfo=TZ)
+    for code, delta in [("1d", timedelta(days=1)), ("3d", timedelta(days=3)),
+                         ("1w", timedelta(weeks=1)), ("1m", timedelta(days=30))]:
+        rc, start, end = dash.resolve_plot_range(code, None, None, latest)
+        assert rc == code
+        assert end == latest
+        assert start == latest - delta
+
+
+def test_resolve_plot_range_all_disables_filtering():
+    rc, start, end = dash.resolve_plot_range("all", None, None, datetime(2026, 7, 13, tzinfo=TZ))
+    assert (rc, start, end) == ("all", None, None)
+
+
+def test_resolve_plot_range_unknown_code_falls_back_to_default():
+    latest = datetime(2026, 7, 13, tzinfo=TZ)
+    rc, start, end = dash.resolve_plot_range("bogus", None, None, latest)
+    assert rc == dash.DEFAULT_RANGE
+    assert end == latest
+
+
+def test_resolve_plot_range_custom_valid():
+    rc, start, end = dash.resolve_plot_range(
+        "custom", "2026-07-01T00:00", "2026-07-05T00:00", None)
+    assert rc == "custom"
+    assert start == datetime(2026, 7, 1, tzinfo=TZ)
+    assert end == datetime(2026, 7, 5, tzinfo=TZ)
+
+
+def test_resolve_plot_range_custom_swaps_reversed_dates():
+    rc, start, end = dash.resolve_plot_range(
+        "custom", "2026-07-05T00:00", "2026-07-01T00:00", None)
+    assert start < end
+
+
+def test_resolve_plot_range_custom_missing_input_falls_back_to_default():
+    latest = datetime(2026, 7, 13, tzinfo=TZ)
+    rc, start, end = dash.resolve_plot_range("custom", "", "", latest)
+    assert rc == dash.DEFAULT_RANGE
+    assert end == latest
+
+
+def test_resolve_plot_range_no_data_yet():
+    """No decision-log rows at all → nothing to anchor a relative window to."""
+    rc, start, end = dash.resolve_plot_range("1d", None, None, None)
+    assert rc == "1d"
+    assert (start, end) == (None, None)
+
+
+def test_filter_range():
+    import pandas as pd
+
+    ts = pd.date_range("2026-07-01", periods=5, freq="D", tz=dash.TZ_NAME)
+    df = pd.DataFrame({"timestamp": ts, "v": range(5)})
+    out = dash._filter_range(df, ts[1], ts[3])
+    assert list(out["v"]) == [1, 2, 3]
+
+
+def _write_synthetic_decision_log(path, days=30):
+    import pandas as pd
+
+    ts = pd.date_range("2026-06-01", periods=days * 24, freq="h", tz=dash.TZ_NAME)
+    df = pd.DataFrame({
+        "timestamp": [t.isoformat() for t in ts],
+        "on_bedroom_ac": 1, "on_living_ac": 0, "on_extension_ac": 1,
+        "T_master_bedroom": 72.0, "T_dining_room": 73.0, "T_tv_room": 74.0,
+    })
+    df.to_csv(path, index=False)
+    return len(df)
+
+
+def test_onoff_data_range_filters_data(dash_paths, monkeypatch):
+    cfg, logs = dash_paths
+    log = logs / "mpc_decision_log.csv"
+    total_rows = _write_synthetic_decision_log(log, days=30)
+    monkeypatch.setattr(dash, "DECISION_LOG", log)
+    client = dash.app.test_client()
+
+    resp = client.get("/plots/onoff_data.json?ac=bedroom_ac&range=1d")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ac"] == "bedroom_ac"
+    assert 20 <= len(body["timestamps"]) <= 25     # ~1 day of hourly rows
+    assert len(body["on"]) == len(body["timestamps"])
+
+    resp = client.get("/plots/onoff_data.json?ac=bedroom_ac&range=all")
+    assert resp.get_json()["timestamps"].__len__() == total_rows
+
+
+def test_onoff_data_includes_room_series_with_bands(dash_paths, monkeypatch):
+    cfg, logs = dash_paths
+    log = logs / "mpc_decision_log.csv"
+    _write_synthetic_decision_log(log, days=2)
+    monkeypatch.setattr(dash, "DECISION_LOG", log)
+    client = dash.app.test_client()
+
+    body = client.get("/plots/onoff_data.json?ac=bedroom_ac&range=all").get_json()
+    rooms = {r["id"]: r for r in body["rooms"]}
+    assert "master_bedroom" in rooms                 # has a T_ column in the synthetic log
+    room = rooms["master_bedroom"]
+    n = len(body["timestamps"])
+    assert len(room["temp"]) == len(room["band_lo"]) == len(room["band_hi"]) == n
+    assert room["color"].startswith("#")
+    assert all(lo <= hi for lo, hi in zip(room["band_lo"], room["band_hi"]))
+    # A room with no T_ column in the log (kids_bedroom/anna_office) is omitted.
+    assert "kids_bedroom" not in rooms
+
+
+def test_onoff_data_unknown_ac_404(dash_paths):
+    client = dash.app.test_client()
+    resp = client.get("/plots/onoff_data.json?ac=not_a_real_ac")
+    assert resp.status_code == 404
+
+
+def test_onoff_data_custom_range_outside_data_is_empty(dash_paths, monkeypatch):
+    cfg, logs = dash_paths
+    log = logs / "mpc_decision_log.csv"
+    _write_synthetic_decision_log(log, days=5)
+    monkeypatch.setattr(dash, "DECISION_LOG", log)
+    client = dash.app.test_client()
+
+    resp = client.get(
+        "/plots/onoff_data.json?ac=bedroom_ac&range=custom"
+        "&start=2020-01-01T00:00&end=2020-01-02T00:00")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["timestamps"] == [] and body["on"] == [] and body["rooms"] == []
+
+
+def test_onoff_data_no_log_file_is_empty(dash_paths, monkeypatch):
+    cfg, logs = dash_paths
+    monkeypatch.setattr(dash, "DECISION_LOG", logs / "mpc_decision_log.csv")  # doesn't exist
+    client = dash.app.test_client()
+    resp = client.get("/plots/onoff_data.json?ac=bedroom_ac")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["timestamps"] == []
+
+
+def test_plotly_js_served_locally(dash_paths):
+    resp = dash.app.test_client().get("/vendor/plotly.min.js")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/javascript"
+    assert len(resp.data) > 100_000                  # the real bundle, not a stub

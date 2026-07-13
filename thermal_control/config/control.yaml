@@ -126,6 +126,7 @@ targets:
         # Bedrooms: tighter band — sleeping comfort matters more than default
         master_bedroom: {min_f: 72, max_f: 75}
         kids_bedroom:   {min_f: 70, max_f: 75}
+        anna_office:    {min_f: 65, max_f: 85}
 
   # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:
