@@ -32,15 +32,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import yaml
 from dotenv import load_dotenv
 
 # ── Path setup ────────────────────────────────────────────────────────────
 ROOT         = Path(__file__).parent          # thermal_control/
 REPO_ROOT    = ROOT.parent                    # /workspaces/InfluxDb/
-WEIGHTS_DIR  = ROOT / "model" / "weights"
-HOUSE_YAML   = ROOT / "config" / "house.yaml"
-CONTROL_YAML = ROOT / "config" / "control.yaml"
 
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -48,9 +44,10 @@ from thermal_control.model.simulate      import HouseSimulator
 from thermal_control.control.mpc         import BangBangMPC
 from thermal_control.control.forecast    import build_outdoor_series
 from thermal_control.control.schedule    import resolve_targets_for_rooms, update_override_tracker
-from thermal_control.control.config_check import validate_config_structure as _validate_config_structure
 from thermal_control.ha_bridge           import controller as ha
 from thermal_control                     import log_writer
+from thermal_control                     import config_reload
+from thermal_control                     import card_sync
 
 # ── Config ────────────────────────────────────────────────────────────────
 load_dotenv(ROOT / ".env")
@@ -69,33 +66,6 @@ SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 DECISION_LOG    = ROOT / "logs" / "mpc_decision_log.csv"
 USER_EVENT_LOG  = ROOT / "logs" / "user_inputs.log"
 VERSION_FILE    = ROOT / "logs" / "mpc_version.txt"   # read by the dashboard footer
-ERROR_LOG       = ROOT / "logs" / "errors.log"        # rejected config reloads land here
-
-
-def _make_config_error_logger():
-    """
-    Dedicated logger for rejected config hot-reloads, writing to errors.log.
-
-    Kept separate from the main INFO stream so an operator who edits a yaml on
-    the server has one file to tail for "did my edit take?". propagate=False so
-    these lines don't also flood stdout; the main logger still records a copy.
-    """
-    el = logging.getLogger("thermal_control.config_errors")
-    el.setLevel(logging.ERROR)
-    el.propagate = False
-    try:
-        ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(ERROR_LOG)
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s  %(levelname)-8s  %(message)s", "%Y-%m-%d %H:%M:%S"))
-        el.addHandler(handler)
-    except OSError as exc:
-        logger.warning(f"Could not open {ERROR_LOG}: {exc}")
-    return el
-
-
-config_error_logger = _make_config_error_logger()
-_last_reload_error_mtimes = None   # de-dupes repeated errors for one broken edit
 
 
 def _write_safe_setpoints(house):
@@ -129,146 +99,6 @@ def _append_user_event(ts, event, room="", value=""):
     log_writer.append_csv_row(USER_EVENT_LOG, {
         "timestamp": ts, "event": event, "room": room, "value": value,
     })
-
-
-def load_configs():
-    with open(HOUSE_YAML) as f:
-        house = yaml.safe_load(f)
-    with open(CONTROL_YAML) as f:
-        control = yaml.safe_load(f)
-    return house, control
-
-
-def _config_mtimes():
-    return (HOUSE_YAML.stat().st_mtime, CONTROL_YAML.stat().st_mtime)
-
-
-def _maybe_reload(known_mtimes):
-    """
-    Detect on-disk changes to house.yaml/control.yaml (volume-mounted in
-    Docker, editable on the server) and rebuild the simulator + MPC from
-    the new config — also picking up any retrained weights in WEIGHTS_DIR.
-
-    The edited config is validated (yaml syntax → required structure →
-    simulator/MPC build) BEFORE it replaces the live config. Returns
-    (house, control, sim, mpc, mtimes) on a successful, validated reload and
-    None otherwise. On any failure (mid-edit/broken yaml, missing key, bad
-    weights) the running controller keeps its last-good config; the failure is
-    recorded in errors.log and retried on the next edit.
-    """
-    global _last_reload_error_mtimes
-    try:
-        mtimes = _config_mtimes()
-    except OSError as exc:
-        logger.warning(f"Could not stat config files — keeping previous config: {exc}")
-        return None
-    if mtimes == known_mtimes:
-        return None
-
-    try:
-        house, control = load_configs()
-        _validate_config_structure(house, control)
-        sim = HouseSimulator(WEIGHTS_DIR, house)
-        mpc = BangBangMPC(sim, house, control)
-    except Exception as exc:
-        msg = (f"Invalid config edit rejected — keeping previous live config "
-               f"({type(exc).__name__}: {exc})")
-        logger.error(msg)
-        # De-dupe: log each distinct broken edit to errors.log once, not on
-        # every tick it stays broken (mtimes are unchanged until the next save).
-        if mtimes != _last_reload_error_mtimes:
-            config_error_logger.error(msg)
-            _last_reload_error_mtimes = mtimes
-        return None
-
-    _last_reload_error_mtimes = None
-    logger.info("Config change detected — validated and reloaded "
-                "house.yaml/control.yaml, rebuilt simulator and MPC")
-    return house, control, sim, mpc, mtimes
-
-
-def _input_signature(house, control):
-    """
-    Cheap snapshot of the user-controllable inputs the HA app changes — the
-    per-room thermostat targets (items 7/7b) and the away toggle (item 8).
-    Compared during the inter-tick sleep so the loop can wake early when the user
-    drags a card instead of waiting up to a full tick. The baseline is captured
-    at the end of a tick (after the scheduler's own write-backs), so a steady
-    state reads stable and only a real user edit trips it. Fails safe so a
-    transient HA glitch at most causes one harmless extra tick.
-    """
-    try:
-        targets = ha.get_room_targets(house)
-    except Exception:
-        targets = {}
-    return (tuple(sorted(targets.items())), ha.get_away_mode(control))
-
-
-def _responsive_sleep(sleep_s, poll_s, house, control, baseline):
-    """
-    Sleep up to sleep_s, waking early (within poll_s) if a user input changes
-    vs `baseline`. Returns True when woken early by a change, False on timeout.
-    """
-    deadline = time.monotonic() + sleep_s
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        time.sleep(min(poll_s, remaining))
-        if time.monotonic() >= deadline:
-            return False
-        if _input_signature(house, control) != baseline:
-            return True
-
-
-def _plan_card_detection(raw_targets, display_target, card_synced, away):
-    """
-    Reconcile per-room thermostat cards (item 7b) against what the scheduler last
-    wrote (``card_synced``) and detect user edits. Pure: returns the writes/edits
-    to act on; the caller performs the HA writes and updates ``card_synced``.
-
-      raw_targets    : {room: target_f} read from the cards this tick (absent =
-                       unavailable).
-      display_target : {room: upper_bound_f} the card should show — the away band
-                       max when away, else the scheduled band max.
-      card_synced    : {room: last_value_the_scheduler_wrote}; room absent = card
-                       not yet seeded.
-
-    Returns (detected, writes):
-      detected : {room: target_f} home-mode user edits (candidate overrides).
-      writes   : {room: target_f} cards to (re)write now — first-tick seeding and
-                 away-mode pinning (away beats override, so edits are ignored and
-                 the card is held on the away target).
-    """
-    detected, writes = {}, {}
-    for room, S in display_target.items():
-        T    = raw_targets.get(room)
-        last = card_synced.get(room)
-        if last is None:                       # first sight → seed to schedule/away
-            writes[room] = S
-        elif away:                             # away pins the card; ignore edits
-            if T != S:
-                writes[room] = S
-        elif T is not None and T != last:      # user dragged the card → override
-            detected[room] = T
-    return detected, writes
-
-
-def _plan_card_revert(raw_targets, display_target, card_synced, effective):
-    """
-    Home-mode follow-up to _plan_card_detection: keep cards for rooms *not* under
-    an active override pinned to the schedule — resyncing on a schedule
-    transition and reverting on override expiry/cancel. Returns {room: target_f}
-    writes to apply (caller updates ``card_synced``).
-    """
-    writes = {}
-    for room, S in display_target.items():
-        if room in effective:                  # leave the user's value showing
-            continue
-        T = raw_targets.get(room)
-        if card_synced.get(room) != S or (T is not None and T != S):
-            writes[room] = S
-    return writes
 
 
 def fill_missing(current_temps, cache, rooms, fallback_f):
@@ -320,16 +150,16 @@ def fill_missing(current_temps, cache, rooms, fallback_f):
 
 
 def run():
-    house, control = load_configs()
-    config_mtimes = _config_mtimes()
+    house, control = config_reload.load_configs()
+    known_mtimes = config_reload.config_mtimes()
 
     local_tz = ZoneInfo(house["location"]["timezone"])
     _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
-    for handler in logging.root.handlers + config_error_logger.handlers:
+    for handler in logging.root.handlers + config_reload.config_error_logger.handlers:
         if handler.formatter:
             handler.formatter.converter = _local_time
 
-    sim = HouseSimulator(WEIGHTS_DIR, house)
+    sim = HouseSimulator(config_reload.WEIGHTS_DIR, house)
     mpc = BangBangMPC(sim, house, control)
 
     tick_seconds = control["mpc"]["tick_minutes"] * 60
@@ -363,9 +193,9 @@ def run():
             logger.info(f"── Tick {now} ─────────────────────────")
 
             # 0. Hot-reload config edited on the server (never raises)
-            reloaded = _maybe_reload(config_mtimes)
+            reloaded = config_reload.maybe_reload(known_mtimes)
             if reloaded:
-                house, control, sim, mpc, config_mtimes = reloaded
+                house, control, sim, mpc, known_mtimes = reloaded
                 tick_seconds = control["mpc"]["tick_minutes"] * 60
 
             try:
@@ -430,7 +260,7 @@ def run():
                 display_target = {r["id"]: display_bands[r["id"]]["max_f"]
                                   for r in house["rooms"] if r.get("thermostat_entity")}
                 raw_targets    = ha.get_room_targets(house)
-                detected, writes = _plan_card_detection(
+                detected, writes = card_sync.plan_card_detection(
                     raw_targets, display_target, card_synced, away
                 )
                 for room, val in writes.items():
@@ -476,7 +306,7 @@ def run():
 
                     # Resync/revert cards not under an active override (schedule
                     # transition, or override just expired/cancelled).
-                    revert = _plan_card_revert(
+                    revert = card_sync.plan_card_revert(
                         raw_targets, display_target, card_synced, overrides
                     )
                     for room, val in revert.items():
@@ -531,8 +361,8 @@ def run():
             poll_s  = max(5, control["mpc"].get("poll_seconds", 20))
             logger.info(f"Tick done in {elapsed:.1f}s, sleeping {sleep_s:.0f}s "
                         f"(polling app targets every {poll_s}s)")
-            baseline = _input_signature(house, control)
-            if _responsive_sleep(sleep_s, poll_s, house, control, baseline):
+            baseline = card_sync.input_signature(house, control)
+            if card_sync.responsive_sleep(sleep_s, poll_s, house, control, baseline):
                 logger.info("App target changed — waking early to re-solve")
 
     except (KeyboardInterrupt, SystemExit):
