@@ -8,7 +8,7 @@ description: Deploy the latest MPC thermal controller AND dashboard images to th
 Deploy two images to `192.168.5.206` (user: `nicolas`):
 
 - `deadentropy/mpc-thermal:latest` — the live controller (`prod` service, **safety-critical**: writes setpoints to real ACs).
-- `deadentropy/mpc-dashboard:latest` — the read-only web dashboard (`dashboard` service, port 8050; safe to (re)start any time, no side effects on the ACs).
+- `deadentropy/mpc-dashboard:latest` — the read-only web dashboard (`dashboard` service, port 8111; safe to (re)start any time, no side effects on the ACs).
 
 **Prerequisite:** both images must already be on Docker Hub. The dashboard image is built from `Dockerfile.dashboard` — if it has never been built/pushed, the `docker pull` in Step 5 will fail. If the user only wants to ship one of the two, deploy just that service (skip the other's pull/up steps).
 
@@ -123,16 +123,16 @@ ssh -F /dev/null -i /tmp/mpc_deploy -o StrictHostKeyChecking=no nicolas@192.168.
 - No `ERROR`, `Traceback`, or `Exited` in the output
 
 **dashboard:**
-- `State: running` (or `Up`), port `8050->5111` mapped in `docker compose ps`
+- `State: running` (or `Up`), port `8111->5111` mapped in `docker compose ps`
 - gunicorn `Booting worker` / `Listening at: http://0.0.0.0:5111` in the logs
 - No `Traceback` (e.g. missing config/logs mount)
-- Optionally confirm it serves: `curl -sf -o /dev/null -w "%{http_code}\n" http://192.168.5.206:8050/` → `200`
+- Optionally confirm it serves: `curl -sf -o /dev/null -w "%{http_code}\n" http://192.168.5.206:8111/` → `200`
 
 ### Unhealthy signs — stop and report
 - Container status is `Exited` or `Restarting`
 - Traceback in logs
 - prod: missing `.env` or weight file errors
-- dashboard: missing config/logs mount, or a port-8050 conflict
+- dashboard: missing config/logs mount, or a port-8111 conflict
 
 The dashboard is non-critical: if **only** the dashboard is unhealthy, leave prod running, report the dashboard error, and don't roll prod back for it.
 
