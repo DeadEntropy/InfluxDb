@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+from thermal_control.control.mpc import BangBangMPC
+
 
 # ── __init__ / config parsing ───────────────────────────────────────────────
 def test_init_parses_config_and_normalizes_power(mpc, control_config):
@@ -92,6 +94,9 @@ def test_solve_excludes_missing_room_from_decision(mpc):
     state[hot_room] = 90.0
 
     steered  = mpc.solve(dict(state), outdoor, missing_rooms=set())
+    # Isolate the two scenarios from switching history — otherwise the second
+    # solve() would be biased toward `steered`'s combo by switch_penalty.
+    mpc._best_combo = None
     ignored  = mpc.solve(dict(state), outdoor, missing_rooms={hot_room})
     # With the hot room counted, extension_ac (covers nicolas_office) is pushed ON;
     # excluding it should relax that pressure → different (cheaper-energy) decision.
@@ -105,6 +110,25 @@ def test_explain_before_and_after_solve(mpc):
     text = mpc.explain()
     assert "chosen" in text
     assert "combinations (ranked)" in text
+
+
+# ── switch_penalty ───────────────────────────────────────────────────────────
+def test_switch_penalty_defaults_to_zero_when_absent(simulator, house_config, control_config):
+    cfg = {**control_config,
+           "mpc": {k: v for k, v in control_config["mpc"].items() if k != "switch_penalty"}}
+    mpc2 = BangBangMPC(simulator, house_config, cfg)
+    assert mpc2.switch_penalty == 0.0
+
+
+def test_switch_penalty_locks_decision_across_ticks(mpc):
+    """A large switch_penalty should dominate any realistic cost difference and
+    keep the MPC on its previous decision even as the state changes somewhat."""
+    outdoor = [90.0] * mpc.horizon
+    first = mpc.solve({r: 78.0 for r in mpc.rooms}, outdoor)
+
+    mpc.switch_penalty = 1000.0   # far larger than any cost difference we've observed
+    held = mpc.solve({r: 76.0 for r in mpc.rooms}, outdoor)
+    assert held == first
 
 
 # ── decision_record ─────────────────────────────────────────────────────────

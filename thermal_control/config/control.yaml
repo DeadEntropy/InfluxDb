@@ -18,6 +18,13 @@ mpc:
   # fewer ACs running when multiple combinations achieve equal comfort
   energy_weight: 0.05
 
+  # Switching-cost penalty: added once per AC that would change state vs. the
+  # previous tick's decision, biasing the MPC to stick with its current combo
+  # on near-ties instead of flip-flopping. 0.1 was sized from a retrospective
+  # replay of the decision log — it roughly halves AC on/off flips while
+  # keeping the resulting discomfort/energy regret to a fraction of a degree.
+  switch_penalty: 0.1
+
   # Manual short-term override (item 7): how long a non-zero HA override slider
   # stays in effect before the scheduler resets it to 0 and the scheduled band
   # resumes. Per-room override_entity ids are declared in house.yaml.
@@ -93,13 +100,13 @@ targets:
       time: "06:00"
       days: weekday
       rooms:
-        anna_office:    {min_f: 75, max_f: 79}
+        anna_office:    {min_f: 75, max_f: 80}
 
     - name: daytime             # weekends 07:30 → 15:00 (sleep in longer)
       time: "07:30"
       days: weekend
       rooms:
-        anna_office:    {min_f: 75, max_f: 79}
+        anna_office:    {min_f: 75, max_f: 80}
 
     - name: early afternoon         # 15:00 → 16:30
       time: "15:15"

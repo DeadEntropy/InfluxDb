@@ -33,6 +33,13 @@ predicted breaches count less than near-certain present ones. The energy
 term is scaled by mean(w) (equivalent to spreading it per-step and
 discounting), which preserves the discomfort/energy balance.
 
+The combo actually *selected* additionally adds switch_penalty × (number of
+ACs that would change state vs. the previous tick's decision) — a small bias
+toward sticking with the current combo on near-ties, to cut down on
+short-cycling. This term is selection-only: the cost/cost_<binary> values
+reported by decision_record() stay the raw discomfort+energy above, so
+logged costs remain comparable across ticks regardless of switch_penalty.
+
 Enumeration
 ───────────
 With 3 AC units there are 2³ = 8 combinations. Each is evaluated by
@@ -80,6 +87,11 @@ class BangBangMPC:
         self.sp_on        = mpc_cfg["setpoint_on_f"]
         self.sp_off       = mpc_cfg["setpoint_off_f"]
         self.energy_w     = mpc_cfg["energy_weight"]
+
+        # Switching-cost penalty (selection-only, see module docstring). Absent
+        # key = 0.0 = no bias, matching today's behavior.
+        self.switch_penalty = mpc_cfg.get("switch_penalty", 0.0)
+        self._best_combo    = None   # previous tick's decision; None until first solve()
 
         # Per-step discount weights (model error grows over the horizon).
         # Defaults make this a no-op when the config keys are absent.
@@ -150,6 +162,10 @@ class BangBangMPC:
         self._missing_rooms   = missing_rooms
         self._current_targets = targets if targets is not None else self.targets
 
+        prev_combo     = self._best_combo   # None on the very first solve() call
+        self._prev_combo = prev_combo       # kept for explain()
+
+        best_adjusted  = float("inf")
         best_cost      = float("inf")
         best_setpoints = None
         best_combo     = None
@@ -168,12 +184,18 @@ class BangBangMPC:
             cost = self._cost(states, combo, missing_rooms)
             results.append((combo, setpoints, cost, states))
 
-            if cost < best_cost:
+            switched = 0 if prev_combo is None else sum(
+                a != b for a, b in zip(combo, prev_combo)
+            )
+            adjusted = cost + self.switch_penalty * switched
+
+            if adjusted < best_adjusted:
+                best_adjusted  = adjusted
                 best_cost      = cost
                 best_setpoints = setpoints
                 best_combo     = combo
 
-        self._last_results    = results        # for inspection / logging
+        self._last_results    = results        # for inspection / logging (raw costs)
         self._best_combo      = best_combo
         self._best_cost       = best_cost
         self._current_state   = current_state
@@ -228,14 +250,30 @@ class BangBangMPC:
             lines.append("\n  All rooms within comfort band.")
 
         # ── 2. Ranked combinations ────────────────────────────────────────
+        prev_combo = getattr(self, "_prev_combo", None)
+
+        def adjusted_cost(combo, cost):
+            if prev_combo is None:
+                return cost
+            switched = sum(a != b for a, b in zip(combo, prev_combo))
+            return cost + self.switch_penalty * switched
+
         lines.append(f"\n── All {len(self._last_results)} combinations (ranked) {'─' * 38}")
-        lines.append(f"  {'Combo (bed/liv/ext)':<22}  {'Setpoints':>30}  {'Cost':>10}")
+        header = f"  {'Combo (bed/liv/ext)':<22}  {'Setpoints':>30}  {'Cost':>10}"
+        if self.switch_penalty:
+            header += f"  {'+switch':>10}"
+        lines.append(header)
         lines.append("  " + "─" * 68)
-        for combo, sp, cost, _ in sorted(self._last_results, key=lambda x: x[2]):
+        for combo, sp, cost, _ in sorted(self._last_results, key=lambda x: adjusted_cost(x[0], x[2])):
             combo_str = "/".join("ON " if c else "off" for c in combo)
             sp_str    = " ".join(f"{ac.split('_')[0]}={v}" for ac, v in sp.items())
             marker    = " ◀ chosen" if combo == self._best_combo else ""
-            lines.append(f"  {combo_str:<20}  {sp_str:>30}  {cost:>10.4f}{marker}")
+            if prev_combo is not None and combo == prev_combo and combo != self._best_combo:
+                marker += " (prev)"
+            row = f"  {combo_str:<20}  {sp_str:>30}  {cost:>10.4f}"
+            if self.switch_penalty:
+                row += f"  {adjusted_cost(combo, cost):>10.4f}"
+            lines.append(row + marker)
 
         # ── 3. Projected outcome for chosen combo ─────────────────────────
         chosen_states = next(
