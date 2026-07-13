@@ -117,31 +117,19 @@ def test_write_safe_setpoints(monkeypatch, house_config):
     assert set(captured.values()) == {sc.SAFE_SETPOINT_F}
 
 
-# ── _append_decision_log ────────────────────────────────────────────────────
-def test_append_decision_log_writes_header_then_row(monkeypatch, tmp_path):
-    log = tmp_path / "mpc_decision_log.csv"
-    monkeypatch.setattr(sc, "DECISION_LOG", log)
-    sc._append_decision_log({"a": 1, "b": 2})
-    sc._append_decision_log({"a": 3, "b": 4})
+# ── _append_user_event ───────────────────────────────────────────────────────
+def test_append_user_event_writes_row(monkeypatch, tmp_path):
+    log = tmp_path / "user_inputs.log"
+    monkeypatch.setattr(sc, "USER_EVENT_LOG", log)
+    sc._append_user_event("2026-07-13T10:00:00", "away_activated")
+    sc._append_user_event("2026-07-13T10:05:00", "override_activated",
+                          room="kitchen", value="77")
     rows = list(csv.DictReader(log.open()))
-    assert rows == [{"a": "1", "b": "2"}, {"a": "3", "b": "4"}]
-
-
-def test_append_decision_log_migrates_on_schema_change(monkeypatch, tmp_path):
-    log = tmp_path / "mpc_decision_log.csv"
-    monkeypatch.setattr(sc, "DECISION_LOG", log)
-    sc._append_decision_log({"a": 1, "b": 2})
-    sc._append_decision_log({"a": 1, "c": 3})   # schema changed: "b" replaced by "c"
-
-    archived = [p for p in tmp_path.iterdir() if p != log]
-    assert len(archived) == 1
-    old_rows = list(csv.DictReader(archived[0].open()))
-    assert old_rows == [{"a": "1", "b": "2"}]      # untouched under the old header
-
-    new_rows = list(csv.DictReader(log.open()))
-    assert new_rows == [
-        {"a": "1", "c": ""},    # migrated: "b" dropped, "c" blank (never had a value)
-        {"a": "1", "c": "3"},   # new row, fully populated under the new schema
+    assert rows == [
+        {"timestamp": "2026-07-13T10:00:00", "event": "away_activated",
+         "room": "", "value": ""},
+        {"timestamp": "2026-07-13T10:05:00", "event": "override_activated",
+         "room": "kitchen", "value": "77"},
     ]
 
 

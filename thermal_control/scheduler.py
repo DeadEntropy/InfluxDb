@@ -23,7 +23,6 @@ Run from the repo root:
     python thermal_control/scheduler.py
 """
 
-import csv
 import logging
 import os
 import signal
@@ -51,6 +50,7 @@ from thermal_control.control.forecast    import build_outdoor_series
 from thermal_control.control.schedule    import resolve_targets_for_rooms, update_override_tracker
 from thermal_control.control.config_check import validate_config_structure as _validate_config_structure
 from thermal_control.ha_bridge           import controller as ha
+from thermal_control                     import log_writer
 
 # ── Config ────────────────────────────────────────────────────────────────
 load_dotenv(ROOT / ".env")
@@ -113,57 +113,6 @@ def _write_safe_setpoints(house):
         logger.error(f"Failed to write safe setpoints on exit: {exc}")
 
 
-def _migrate_decision_log(new_fieldnames):
-    """
-    Roll the on-disk decision log onto a new schema: archive the existing file
-    with a timestamp suffix, then rebuild the live file under the new header,
-    replaying every old row (extra old columns dropped, new columns left blank
-    via DictWriter's default restval). Called by _append_decision_log when a
-    code change adds/removes a field, so history survives a schema change
-    instead of being corrupted (misaligned columns) or discarded.
-    """
-    archived = DECISION_LOG.with_name(
-        f"{DECISION_LOG.stem}.{datetime.now():%Y%m%dT%H%M%S}{DECISION_LOG.suffix}"
-    )
-    DECISION_LOG.rename(archived)
-    logger.warning(f"Decision log schema changed — archived previous log to "
-                    f"{archived.name}, migrating history to the new schema")
-
-    tmp = DECISION_LOG.with_suffix(DECISION_LOG.suffix + ".tmp")
-    with open(archived, newline="") as src, open(tmp, "w", newline="") as dst:
-        reader = csv.DictReader(src)
-        writer = csv.DictWriter(dst, fieldnames=new_fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in reader:
-            writer.writerow(row)
-    tmp.replace(DECISION_LOG)
-
-
-def _append_decision_log(record):
-    """Append one row to the CSV decision log, creating the file if needed."""
-    try:
-        DECISION_LOG.parent.mkdir(parents=True, exist_ok=True)
-        fieldnames = list(record.keys())
-
-        if DECISION_LOG.exists():
-            with open(DECISION_LOG, newline="") as f:
-                existing_header = next(csv.reader(f), None)
-            if existing_header is not None and existing_header != fieldnames:
-                _migrate_decision_log(fieldnames)
-
-        write_header = not DECISION_LOG.exists()
-        with open(DECISION_LOG, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if write_header:
-                writer.writeheader()
-            writer.writerow(record)
-    except Exception as exc:
-        logger.warning(f"Decision log write failed: {exc}")
-
-
-_USER_EVENT_FIELDS = ["timestamp", "event", "room", "value"]
-
-
 def _append_user_event(ts, event, room="", value=""):
     """
     Append one row to the user-event log (user_inputs.log).
@@ -177,17 +126,9 @@ def _append_user_event(ts, event, room="", value=""):
       room       room_id (empty for away-mode events)
       value      target_f for override events; empty otherwise
     """
-    try:
-        USER_EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not USER_EVENT_LOG.exists()
-        with open(USER_EVENT_LOG, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=_USER_EVENT_FIELDS)
-            if write_header:
-                writer.writeheader()
-            writer.writerow({"timestamp": ts, "event": event,
-                             "room": room, "value": value})
-    except Exception as exc:
-        logger.warning(f"User event log write failed: {exc}")
+    log_writer.append_csv_row(USER_EVENT_LOG, {
+        "timestamp": ts, "event": event, "room": room, "value": value,
+    })
 
 
 def load_configs():
@@ -409,11 +350,7 @@ def run():
     logger.info(f"Code version  : {mpc_version}")
     # Stamp the version into the shared logs dir so the (separate) dashboard
     # container can surface which MPC build is live. Best-effort: never fatal.
-    try:
-        VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        VERSION_FILE.write_text(mpc_version + "\n")
-    except OSError as exc:
-        logger.warning(f"could not write {VERSION_FILE.name}: {exc}")
+    log_writer.write_version_file(VERSION_FILE, mpc_version)
     logger.info(f"Tick interval : {control['mpc']['tick_minutes']} min")
     logger.info(f"Horizon       : {control['mpc']['horizon_steps']} steps "
                 f"({control['mpc']['horizon_steps'] * control['mpc']['tick_minutes']} min)")
@@ -576,7 +513,7 @@ def run():
                     logger.error(f"Setpoint apply failed: {exc}", exc_info=True)
 
                 # 9. Append one row to the decision log CSV
-                _append_decision_log({
+                log_writer.append_csv_row(DECISION_LOG, {
                     "timestamp": datetime.now(tz=local_tz).isoformat(timespec="seconds"),
                     "T_outdoor": round(outdoor, 1),
                     "write_ok":  write_ok,
