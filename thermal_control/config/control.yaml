@@ -53,9 +53,10 @@ targets:
   # schedule), so a flaky helper never strands the house warm.
   away:
     entity: input_boolean.mpc_away_mode   # HA toggle; set null/remove to disable
-    default: {min_f: 76, max_f: 78}       # rooms with no explicit entry below
-    rooms: {}                             # optional per-room overrides, e.g.
-                                          #   nicolas_office: {min_f: 76, max_f: 78}
+    default: {min_f: 65, max_f: 80}       # rest of house — don't care about cold, cap heat at 80
+    rooms:
+      family_room: {min_f: 65, max_f: 78}  # tighter cap while away
+      anna_office: {min_f: 65, max_f: 85}  # fully invisible — matches normal-schedule treatment
 
   # ── Time-of-day schedule ──────────────────────────────────────────────────
   # Entries take effect at their time (24h local, America/New_York) and stay
@@ -76,7 +77,7 @@ targets:
       rooms:
         # Bedrooms: tighter band — sleeping comfort matters more than default
         master_bedroom: {min_f: 72, max_f: 74}
-        kids_bedroom:   {min_f: 72, max_f: 74}
+        kids_bedroom:   {min_f: 70, max_f: 74}
         # bedroom_ac also covers anna_office — widen it so the AC isn't split
         # between sleeping people and an empty office
         anna_office:    {min_f: 65, max_f: 85}
@@ -111,6 +112,13 @@ targets:
       time: "16:30"
       rooms: 
         anna_office:    {min_f: 65, max_f: 85}
+
+    - name: early evening         # 16:30 → 22:00
+      time: "20:45"
+      rooms: 
+        # Bedrooms: tighter band — sleeping comfort matters more than default
+        master_bedroom: {min_f: 72, max_f: 75}
+        kids_bedroom:   {min_f: 70, max_f: 75}
 
   # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:

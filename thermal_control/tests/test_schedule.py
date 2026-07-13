@@ -80,7 +80,7 @@ def test_resolve_active_entry_name(control_config):
 def test_away_targets_uses_away_band(control_config):
     rooms = ["kitchen", "nicolas_office"]
     away = sch.away_targets(control_config, rooms)
-    assert away == {r: {"min_f": 76, "max_f": 78} for r in rooms}
+    assert away == {r: {"min_f": 65, "max_f": 80} for r in rooms}
 
 
 def test_away_targets_fallback_when_block_absent():
@@ -94,7 +94,7 @@ def test_resolve_for_rooms_priority_chain(control_config):
 
     # away beats everything
     assert sch.resolve_targets_for_rooms(control_config, rooms, MONDAY,
-                                         away=True)["nicolas_office"] == {"min_f": 76, "max_f": 78}
+                                         away=True)["nicolas_office"] == {"min_f": 65, "max_f": 80}
 
     # manual override sets the upper bound, lower bound follows at the scheduled
     # width, and it beats presence (unoccupied)
