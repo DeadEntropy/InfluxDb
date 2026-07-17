@@ -465,21 +465,82 @@ def _is_away(intervals, ts):
     return any(start <= ts <= end for start, end in intervals)
 
 
+def _override_series():
+    """{room_id: [(start, end, target_f), ...]} reconstructed from
+    override_activated/changed/expired/cancelled/cleared events in
+    user_inputs.log — the per-room analogue of _away_intervals(). A still-open
+    interval (activated/changed with no closing event yet) gets end=now."""
+    if not USER_INPUTS.exists():
+        return {}
+    tz  = ZoneInfo(TZ_NAME)
+    now = datetime.now(tz)
+
+    events_by_room = {}
+    with open(USER_INPUTS, newline="") as f:
+        for row in csv.DictReader(f):
+            event = (row.get("event") or "").strip()
+            room  = (row.get("room") or "").strip()
+            if not room or not event.startswith("override"):
+                continue
+            try:
+                ts = parse_ts(row["timestamp"])
+            except (ValueError, KeyError):
+                continue
+            events_by_room.setdefault(room, []).append((ts, event, (row.get("value") or "").strip()))
+
+    out = {}
+    for room, events in events_by_room.items():
+        events.sort(key=lambda e: e[0])
+        intervals = []
+        start = value = None
+        for ts, event, val in events:
+            if event in ("override_activated", "override_changed"):
+                if start is not None:
+                    intervals.append((start, ts, value))
+                start, value = ts, to_float(val)
+            elif event in ("override_expired", "override_cancelled", "override_cleared"):
+                if start is not None:
+                    intervals.append((start, ts, value))
+                    start = value = None
+        if start is not None:
+            intervals.append((start, now, value))
+        out[room] = intervals
+    return out
+
+
+def _overrides_at(override_series, room_ids, ts):
+    """{room_id: target_f} still active at `ts`, from _override_series()."""
+    out = {}
+    for room in room_ids:
+        for start, end, value in override_series.get(room, []):
+            if start <= ts <= end and value is not None:
+                out[room] = value
+                break
+    return out
+
+
 def _room_series(df, control_cfg, ac):
     """[{id, label, color, temp, band_lo, band_hi}, ...] for the rooms this AC
     covers that have a temperature column in df. band_lo/band_hi are the
     comfort band actually in effect at each row's own timestamp (piecewise
-    constant) — schedule-resolved, except during a logged away/holiday period,
-    when every room gets the away band instead (mirrors what the MPC actually
-    targeted at that moment; reconstructed from user_inputs.log since away
-    isn't itself a decision-log column)."""
+    constant) — schedule-resolved, except during a logged away/holiday period
+    (every room gets the away band instead) or a logged manual override on
+    that room (the band's upper bound follows the user's value). Both are
+    reconstructed from user_inputs.log, since neither is itself a
+    decision-log column, and mirror what the MPC actually targeted at that
+    moment."""
     room_ids = [r for r in AC_ROOMS.get(ac, []) if f"T_{r}" in df.columns]
     if not room_ids:
         return []
 
     away_intervals = _away_intervals()
+    override_series = _override_series()
     resolved = [
-        resolve_targets_for_rooms(control_cfg, room_ids, ts, away=_is_away(away_intervals, ts))
+        resolve_targets_for_rooms(
+            control_cfg, room_ids, ts,
+            away=_is_away(away_intervals, ts),
+            override_targets=_overrides_at(override_series, room_ids, ts),
+        )
         for ts in df["timestamp"]
     ]
 

@@ -6,6 +6,7 @@ clear the moment it is fixed — so liveness is re-validated each render rather
 than read from a sticky errors.log entry.
 """
 
+import csv
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -213,6 +214,34 @@ def test_onoff_data_includes_room_series_with_bands(dash_paths, monkeypatch):
     assert all(lo <= hi for lo, hi in zip(room["band_lo"], room["band_hi"]))
     # A room with no T_ column in the log (kids_bedroom/anna_office) is omitted.
     assert "kids_bedroom" not in rooms
+
+
+def test_onoff_data_room_series_reflects_active_override(dash_paths, monkeypatch):
+    """A logged manual override on a room must shift band_hi to the user's
+    target for rows inside the override window, not just the plain schedule
+    band (regression: the historical plot used to ignore overrides entirely)."""
+    cfg, logs = dash_paths
+    log = logs / "mpc_decision_log.csv"
+    _write_synthetic_decision_log(log, days=2)
+    monkeypatch.setattr(dash, "DECISION_LOG", log)
+
+    user_inputs = logs / "user_inputs.log"
+    with open(user_inputs, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "event", "room", "value"])
+        w.writerow(["2026-06-01T05:00:00-04:00", "override_activated", "master_bedroom", "81"])
+        w.writerow(["2026-06-01T08:00:00-04:00", "override_cancelled", "master_bedroom", "81"])
+    monkeypatch.setattr(dash, "USER_INPUTS", user_inputs)
+
+    client = dash.app.test_client()
+    body = client.get("/plots/onoff_data.json?ac=bedroom_ac&range=all").get_json()
+    room = {r["id"]: r for r in body["rooms"]}["master_bedroom"]
+    timestamps = body["timestamps"]
+
+    in_window  = timestamps.index("2026-06-01T06:00:00-04:00")
+    out_window = timestamps.index("2026-06-01T02:00:00-04:00")
+    assert room["band_hi"][in_window] == 81
+    assert room["band_hi"][out_window] != 81
 
 
 def test_onoff_data_unknown_ac_404(dash_paths):
