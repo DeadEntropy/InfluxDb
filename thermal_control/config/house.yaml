@@ -129,6 +129,10 @@ ac_units:
     climate_entity: climate.bedroom_thermostat
     ac_sensor_entity: sensor.bedroom_thermostat_air_temperature
     sensor_room: dining_room
+    # Kill switch (item 10): 'on' = MPC stops writing to this unit entirely,
+    # leaving whatever mode/setpoint is set (manually or by the unit itself)
+    # untouched. Rooms with no kill_entity are always MPC-controlled.
+    kill_entity: input_boolean.mpc_kill_bedroom_ac
     covers:
       - master_bedroom
       - kids_bedroom
@@ -143,6 +147,7 @@ ac_units:
     climate_entity: climate.thermostat_central
     ac_sensor_entity: sensor.thermostat_central_air_temperature_2
     sensor_room: kitchen
+    kill_entity: input_boolean.mpc_kill_living_ac
     covers:
       - dining_room
       - kitchen
@@ -155,6 +160,7 @@ ac_units:
     climate_entity: climate.thermostat_extension
     ac_sensor_entity: sensor.thermostat_extension_air_temperature_2
     sensor_room: tv_room
+    kill_entity: input_boolean.mpc_kill_extension_ac
     covers:
       - tv_room
       - nicolas_office

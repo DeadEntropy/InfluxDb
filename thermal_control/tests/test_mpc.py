@@ -131,6 +131,28 @@ def test_switch_penalty_locks_decision_across_ticks(mpc):
     assert held == first
 
 
+def test_switch_penalty_never_blocks_turning_off(mpc):
+    """Regression for the 2026-07-16 incident: extension_ac turned on while
+    nicolas_office was occupied and warm, then stayed on all night after the
+    room went unoccupied and comfort was restored, because a symmetric
+    switch_penalty outweighed the (always smaller) energy saving from turning
+    it off. Turning OFF must never be penalised, however large switch_penalty
+    is, so a no-longer-needed AC always has a path back off."""
+    outdoor = [90.0] * mpc.horizon
+    ext_idx = mpc.ac_units.index("extension_ac")
+
+    # Previous tick: extension_ac ON, everything else off.
+    mpc._best_combo = tuple(1 if i == ext_idx else 0 for i in range(len(mpc.ac_units)))
+
+    # This tick: comfortably in-band everywhere → no discomfort pressure to
+    # keep any AC on, only the (tiny) energy cost of running extension_ac.
+    wide_targets = {r: {"min_f": 60, "max_f": 90} for r in mpc.rooms}
+    mpc.switch_penalty = 1000.0   # would dominate any turn-ON decision
+    sp = mpc.solve({r: 75.0 for r in mpc.rooms}, outdoor, targets=wide_targets)
+
+    assert sp["extension_ac"] == mpc.sp_off
+
+
 # ── decision_record ─────────────────────────────────────────────────────────
 def test_decision_record_columns(mpc):
     assert mpc.decision_record() == {}                    # before solve

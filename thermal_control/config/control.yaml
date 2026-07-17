@@ -18,9 +18,14 @@ mpc:
   # fewer ACs running when multiple combinations achieve equal comfort
   energy_weight: 0.05
 
-  # Switching-cost penalty: added once per AC that would change state vs. the
-  # previous tick's decision, biasing the MPC to stick with its current combo
-  # on near-ties instead of flip-flopping. 0.1 was sized from a retrospective
+  # Switching-cost penalty: added once per AC that would turn ON vs. the
+  # previous tick's decision, biasing the MPC against flipping an AC on for a
+  # marginal gain (cuts down on short-cycling). Turning an AC OFF is never
+  # penalised — a symmetric penalty let a legitimately-on AC get permanently
+  # stuck on once comfort was satisfied, since the per-tick energy saving
+  # from switching off is always smaller than any reasonable switch_penalty
+  # (incident: 2026-07-16 night, extension_ac stuck on for hours after
+  # nicolas_office went unoccupied). 0.1 was sized from a retrospective
   # replay of the decision log — it roughly halves AC on/off flips while
   # keeping the resulting discomfort/energy regret to a fraction of a degree.
   switch_penalty: 0.1
@@ -89,11 +94,11 @@ targets:
         # between sleeping people and an empty office
         anna_office:    {min_f: 65, max_f: 85}
         # living_ac zone: all unoccupied at night → let living_ac go quiet
-        dining_room:    {min_f: 65, max_f: 77}
+        dining_room:    {min_f: 65, max_f: 79}
         kitchen:        {min_f: 65, max_f: 85}
-        family_room:    {min_f: 65, max_f: 77}
+        family_room:    {min_f: 65, max_f: 78}
         # extension_ac zone: both rooms empty at night → extension_ac goes off
-        tv_room:        {min_f: 65, max_f: 77}
+        tv_room:        {min_f: 65, max_f: 79}
         nicolas_office: {min_f: 65, max_f: 85}
 
     - name: daytime             # weekdays 06:00 → 15:00
@@ -127,6 +132,11 @@ targets:
         master_bedroom: {min_f: 72, max_f: 75}
         kids_bedroom:   {min_f: 70, max_f: 75}
         anna_office:    {min_f: 65, max_f: 85}
+        dining_room:    {min_f: 65, max_f: 79}
+        kitchen:        {min_f: 65, max_f: 79}
+        family_room:    {min_f: 65, max_f: 78}
+        tv_room:        {min_f: 65, max_f: 78}
+        nicolas_office: {min_f: 65, max_f: 78}
 
   # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:

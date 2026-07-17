@@ -83,6 +83,24 @@ def test_get_presence_failsafe_occupied(monkeypatch, house_config):
     assert ha.get_presence(house_config) == {"nicolas_office": True}
 
 
+# ── get_killed_acs ──────────────────────────────────────────────────────────
+def test_get_killed_acs_reads_per_ac_entity(monkeypatch, house_config):
+    acs = {ac["id"]: ac["kill_entity"] for ac in house_config["ac_units"]}
+    on_ac, off_ac = list(acs)[0], list(acs)[1]
+    states = {ent: {"state": "off"} for ent in acs.values()}
+    states[acs[on_ac]] = {"state": "on"}
+    monkeypatch.setattr(ha, "_get_state", make_get_state(states))
+    killed = ha.get_killed_acs(house_config)
+    assert killed == {on_ac}
+    assert off_ac not in killed
+
+
+def test_get_killed_acs_failsafe_controlled(monkeypatch, house_config):
+    # read error → fail safe to "not killed" (still MPC-controlled)
+    monkeypatch.setattr(ha, "_get_state", make_get_state({}))
+    assert ha.get_killed_acs(house_config) == set()
+
+
 # ── get_room_targets ──────────────────────────────────────────────────────
 def test_get_room_targets(monkeypatch, house_config):
     ent = "climate.mpc_kitchen"

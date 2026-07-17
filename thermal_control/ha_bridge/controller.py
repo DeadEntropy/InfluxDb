@@ -146,6 +146,28 @@ def get_presence(house_config):
     return result
 
 
+def get_killed_acs(house_config):
+    """
+    Return the set of ac_ids currently killed (item 10): 'on' = the MPC must
+    not write any setpoint to that unit this tick, leaving it under whatever
+    control it's already under (manual HA edit, or its own on-device logic).
+    Fails safe to "not killed" (still MPC-controlled) on any read error or
+    when no kill_entity is configured — a flaky helper must never silently
+    strand an AC unmanaged.
+    """
+    result = set()
+    for ac in house_config["ac_units"]:
+        entity = ac.get("kill_entity")
+        if not entity:
+            continue
+        try:
+            if _get_state(entity)["state"] == "on":
+                result.add(ac["id"])
+        except Exception as exc:
+            logger.warning(f"Could not read kill switch {entity}: {exc} — assuming controlled")
+    return result
+
+
 def get_room_targets(house_config):
     """
     Return {room_id: target_f_int} read from each room's thermostat_entity

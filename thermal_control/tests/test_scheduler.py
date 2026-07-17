@@ -24,6 +24,33 @@ def test_fill_missing_fresh_cached_stale_and_never_seen():
     assert cache["a"][0] == 75.0                           # fresh reading cached
 
 
+# ── resolve_kill_switch (item 10) ────────────────────────────────────────────
+def test_resolve_kill_switch_filters_setpoints_and_detects_transitions():
+    ac_ids    = ["bedroom_ac", "living_ac", "extension_ac"]
+    setpoints = {"bedroom_ac": 65, "living_ac": 84, "extension_ac": 65}
+    killed_state = {}
+
+    # Tick 1: extension_ac freshly killed → filtered out + one transition logged.
+    write_sp, transitions = sc.resolve_kill_switch(
+        {"extension_ac"}, killed_state, ac_ids, setpoints
+    )
+    assert write_sp == {"bedroom_ac": 65, "living_ac": 84}   # extension_ac dropped
+    assert transitions == [("extension_ac", True)]
+    assert killed_state == {"extension_ac": True}   # untouched ac_ids default, unrecorded
+
+    # Tick 2: still killed, nothing changed → no new transition, still filtered.
+    write_sp, transitions = sc.resolve_kill_switch(
+        {"extension_ac"}, killed_state, ac_ids, setpoints
+    )
+    assert write_sp == {"bedroom_ac": 65, "living_ac": 84}
+    assert transitions == []
+
+    # Tick 3: released → back in write_setpoints, transition logged as False.
+    write_sp, transitions = sc.resolve_kill_switch(set(), killed_state, ac_ids, setpoints)
+    assert write_sp == setpoints
+    assert transitions == [("extension_ac", False)]
+
+
 # ── _write_safe_setpoints ───────────────────────────────────────────────────
 def test_write_safe_setpoints(monkeypatch, house_config):
     captured = {}

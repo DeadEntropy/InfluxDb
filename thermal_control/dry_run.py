@@ -74,6 +74,9 @@ if presence:
                                     for r, occ in sorted(presence.items())))
 if overrides:
     print("Overrides: " + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))
+killed = ha.get_killed_acs(house)
+if killed:
+    print("Killed (MPC not writing): " + ", ".join(sorted(killed)))
 
 # ── Fill missing sensors with fallback ───────────────────────────────────
 state = {}
@@ -101,6 +104,7 @@ setpoints = mpc.solve(state, outdoor_series, targets=targets)
 print("\nOptimal setpoints (DRY RUN — nothing written to HA):")
 for ac_id, sp in setpoints.items():
     label = "ON" if sp == control["mpc"]["setpoint_on_f"] else "OFF"
-    print(f"  {ac_id:<15}  {sp}°F  ({label})")
+    killed_note = "  [KILLED — live scheduler would not write this]" if ac_id in killed else ""
+    print(f"  {ac_id:<15}  {sp}°F  ({label}){killed_note}")
 
 print(mpc.explain())

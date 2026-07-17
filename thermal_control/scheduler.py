@@ -92,13 +92,35 @@ def _append_user_event(ts, event, room="", value=""):
       event      one of: away_activated, away_deactivated,
                          presence_occupied, presence_unoccupied,
                          override_activated, override_changed,
-                         override_expired, override_cancelled
-      room       room_id (empty for away-mode events)
+                         override_expired, override_cancelled,
+                         kill_activated, kill_deactivated
+      room       room_id (empty for away-mode events); ac_id for kill events
       value      target_f for override events; empty otherwise
     """
     log_writer.append_csv_row(USER_EVENT_LOG, {
         "timestamp": ts, "event": event, "room": room, "value": value,
     })
+
+
+def resolve_kill_switch(killed, killed_state, ac_ids, setpoints):
+    """
+    Diff this tick's killed-AC set against killed_state (item 10; mutated in
+    place) to find transitions, and filter setpoints to exclude killed units
+    entirely — the caller must not write anything derived from `setpoints`
+    for a killed ac_id, leaving it under whatever control it's already
+    under (manual HA edit, or its own on-device logic).
+
+    Returns (write_setpoints, transitions) where transitions is a list of
+    (ac_id, is_killed) for units whose kill state changed this tick.
+    """
+    transitions = []
+    for ac_id in ac_ids:
+        is_killed = ac_id in killed
+        if killed_state.get(ac_id, False) != is_killed:   # unseen ac_id defaults to "not killed"
+            transitions.append((ac_id, is_killed))
+            killed_state[ac_id] = is_killed
+    write_setpoints = {ac_id: sp for ac_id, sp in setpoints.items() if ac_id not in killed}
+    return write_setpoints, transitions
 
 
 def fill_missing(current_temps, cache, rooms, fallback_f):
@@ -169,6 +191,7 @@ def run():
     presence_state = {}    # {room_id: occupied_bool} (item 9); transitions logged
     override_tracker = {}  # {room_id: (target_f, started_at)} (items 7/7b)
     card_synced  = {}      # {room_id: last target the scheduler wrote} (item 7b)
+    killed_state = {}      # {ac_id: killed_bool} (item 10); transitions logged
 
     # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
     # except-Exception block and hits the outer finally → safe setpoints written.
@@ -320,11 +343,34 @@ def run():
                 setpoints = mpc.solve(state, outdoor_series, missing_rooms, targets)
                 logger.info(mpc.explain())
 
+                # 6b. Kill switch (item 10): a killed AC is dropped from the setpoints
+                #     about to be written, so it's left exactly as it is — under manual
+                #     control or its own on-device logic — rather than bang-banged.
+                #     The MPC still *solves* for it above (cheap, keeps the log/explain
+                #     informative) but nothing derived from that solve reaches HA for it.
+                killed = ha.get_killed_acs(house)
+                write_setpoints, transitions = resolve_kill_switch(
+                    killed, killed_state, mpc.ac_units, setpoints
+                )
+                for ac_id, is_killed in transitions:
+                    logger.warning(
+                        f"Kill switch {ac_id}: "
+                        f"{'ACTIVATED — MPC releasing control' if is_killed else 'DEACTIVATED — MPC resuming control'}"
+                    )
+                    _append_user_event(
+                        now_dt.isoformat(timespec="seconds"),
+                        "kill_activated" if is_killed else "kill_deactivated",
+                        room=ac_id,
+                    )
+                if killed:
+                    logger.info(f"Killed (MPC not writing): {', '.join(sorted(killed))}")
+
                 # 7. Correct hvac_mode for any ON-commanded unit that has drifted
                 #    out of 'cool' mode (HA restart, power blip). Units are normally
                 #    always left in 'cool' so this fires only on anomalous ticks.
+                #    Skips killed units — their mode isn't ours to correct.
                 setpoint_on = control["mpc"]["setpoint_on_f"]
-                for ac_id, sp in setpoints.items():
+                for ac_id, sp in write_setpoints.items():
                     if sp == setpoint_on and ac_states[ac_id]["hvac_mode"] != "cool":
                         logger.warning(
                             f"{ac_id}: hvac_mode='{ac_states[ac_id]['hvac_mode']}' "
@@ -337,7 +383,7 @@ def run():
                 logger.info("Applying setpoints:")
                 write_ok = True
                 try:
-                    ha.apply_setpoints(setpoints, house)
+                    ha.apply_setpoints(write_setpoints, house)
                 except Exception as exc:
                     write_ok = False
                     logger.error(f"Setpoint apply failed: {exc}", exc_info=True)
@@ -347,6 +393,7 @@ def run():
                     "timestamp": datetime.now(tz=local_tz).isoformat(timespec="seconds"),
                     "T_outdoor": round(outdoor, 1),
                     "write_ok":  write_ok,
+                    **{f"killed_{ac_id}": int(ac_id in killed) for ac_id in mpc.ac_units},
                     **mpc.decision_record(),
                 })
 

@@ -34,11 +34,17 @@ term is scaled by mean(w) (equivalent to spreading it per-step and
 discounting), which preserves the discomfort/energy balance.
 
 The combo actually *selected* additionally adds switch_penalty × (number of
-ACs that would change state vs. the previous tick's decision) — a small bias
-toward sticking with the current combo on near-ties, to cut down on
-short-cycling. This term is selection-only: the cost/cost_<binary> values
-reported by decision_record() stay the raw discomfort+energy above, so
-logged costs remain comparable across ticks regardless of switch_penalty.
+ACs that would turn ON vs. the previous tick's decision) — a small bias
+against flipping an AC on for a marginal gain, to cut down on short-cycling.
+Turning an AC OFF is never penalised: energy_weight already pulls the
+optimum toward fewer ACs running, and since the per-tick energy cost of one
+AC is bounded well below any reasonable switch_penalty, a symmetric penalty
+would make that pull unbeatable — an AC that turned on for a real reason
+(e.g. a room was occupied and warm) would then stay on indefinitely once
+comfort was restored, never releasing back off. This term is selection-only:
+the cost/cost_<binary> values reported by decision_record() stay the raw
+discomfort+energy above, so logged costs remain comparable across ticks
+regardless of switch_penalty.
 
 Enumeration
 ───────────
@@ -184,10 +190,10 @@ class BangBangMPC:
             cost = self._cost(states, combo, missing_rooms)
             results.append((combo, setpoints, cost, states))
 
-            switched = 0 if prev_combo is None else sum(
-                a != b for a, b in zip(combo, prev_combo)
+            turned_on = 0 if prev_combo is None else sum(
+                a == 1 and b == 0 for a, b in zip(combo, prev_combo)
             )
-            adjusted = cost + self.switch_penalty * switched
+            adjusted = cost + self.switch_penalty * turned_on
 
             if adjusted < best_adjusted:
                 best_adjusted  = adjusted
@@ -255,8 +261,8 @@ class BangBangMPC:
         def adjusted_cost(combo, cost):
             if prev_combo is None:
                 return cost
-            switched = sum(a != b for a, b in zip(combo, prev_combo))
-            return cost + self.switch_penalty * switched
+            turned_on = sum(a == 1 and b == 0 for a, b in zip(combo, prev_combo))
+            return cost + self.switch_penalty * turned_on
 
         lines.append(f"\n── All {len(self._last_results)} combinations (ranked) {'─' * 38}")
         header = f"  {'Combo (bed/liv/ext)':<22}  {'Setpoints':>30}  {'Cost':>10}"
