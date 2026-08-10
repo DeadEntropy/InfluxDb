@@ -143,6 +143,32 @@ def test_get_ac_states_derives_ac_on(monkeypatch, house_config):
     assert result["living_ac"]["setpoint_f"] == 72
 
 
+def test_get_ac_states_unit_switched_off_externally(monkeypatch, house_config):
+    """Regression: a unit flipped to 'off' outside the MPC (physical remote/
+    panel — the MPC itself never sets hvac_mode='off') reports temperature/
+    current_temperature as None. That must not blow up the whole tick."""
+    states = {}
+    for ac in house_config["ac_units"]:
+        states[ac["climate_entity"]] = {
+            "state": "cool",
+            "attributes": {"current_temperature": 74, "temperature": 72,
+                           "hvac_action": "cooling"},
+        }
+    off_entity = house_config["ac_units"][0]["climate_entity"]
+    states[off_entity] = {
+        "state": "off",
+        "attributes": {"current_temperature": None, "temperature": None,
+                       "hvac_action": "off"},
+    }
+    monkeypatch.setattr(ha, "_get_state", make_get_state(states))
+    result = ha.get_ac_states(house_config)
+    off_id = house_config["ac_units"][0]["id"]
+    assert result[off_id]["hvac_mode"] == "off"
+    assert result[off_id]["setpoint_f"] is None
+    assert result[off_id]["ac_sensor_temp_f"] is None
+    assert result[off_id]["ac_on"] == 0
+
+
 # ── set_hvac_mode ───────────────────────────────────────────────────────────
 def test_set_hvac_mode_posts(monkeypatch, house_config):
     calls = []

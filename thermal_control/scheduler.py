@@ -239,9 +239,10 @@ def run():
                 #    (unexpected mode drift) are visible in the log history.
                 ac_states = ha.get_ac_states(house)
                 for ac_id, s in ac_states.items():
+                    sensor_str = f"{s['ac_sensor_temp_f']:.1f}°F" if s["ac_sensor_temp_f"] is not None else "n/a"
                     logger.info(f"  {ac_id}: mode={s['hvac_mode']}  "
                                 f"action={s['hvac_action']}  "
-                                f"sensor={s['ac_sensor_temp_f']:.1f}°F  "
+                                f"sensor={sensor_str}  "
                                 f"setpoint={s['setpoint_f']}°F")
 
                 # 3. Outdoor temperature

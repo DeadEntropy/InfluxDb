@@ -229,16 +229,22 @@ def get_ac_states(house_config):
     """
     Returns {ac_id: {hvac_mode, ac_sensor_temp_f, setpoint_f, hvac_action, ac_on}}
     using the climate entity's state and attributes.
-    Raises if any climate entity is unreachable (they are critical).
+    Raises if any climate entity is unreachable (they are critical). A unit
+    switched to 'off' outside the MPC (physical remote/panel — the MPC itself
+    never sets hvac_mode='off', only toggles the setpoint) reports
+    current_temperature/temperature as None; those come back None here rather
+    than raising, so one externally-off unit doesn't abort the whole tick.
     """
     result = {}
     for ac in house_config["ac_units"]:
-        s     = _get_state(ac["climate_entity"])
-        attrs = s["attributes"]
+        s            = _get_state(ac["climate_entity"])
+        attrs        = s["attributes"]
+        current_temp = attrs.get("current_temperature")
+        setpoint     = attrs.get("temperature")
         result[ac["id"]] = {
             "hvac_mode":        s["state"],
-            "ac_sensor_temp_f": float(attrs["current_temperature"]),
-            "setpoint_f":       int(attrs["temperature"]),
+            "ac_sensor_temp_f": float(current_temp) if current_temp is not None else None,
+            "setpoint_f":       int(setpoint) if setpoint is not None else None,
             "hvac_action":      attrs.get("hvac_action", "unknown"),
             "ac_on":            int(attrs.get("hvac_action") == "cooling"),
         }
