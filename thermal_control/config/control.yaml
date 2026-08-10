@@ -33,7 +33,7 @@ mpc:
   # Manual short-term override (item 7): how long a non-zero HA override slider
   # stays in effect before the scheduler resets it to 0 and the scheduled band
   # resumes. Per-room override_entity ids are declared in house.yaml.
-  override_duration_minutes: 60
+  override_duration_minutes: 120
 
   # Horizon discounting — down-weight far-future steps because model error
   # accumulates over the rollout: a breach predicted at t+3h is far less
@@ -56,7 +56,7 @@ targets:
   # Comfort band in °F — penalty applied outside this range
   default:
     min_f: 75
-    max_f: 77
+    max_f: 78
 
   # ── Away / holiday mode (item 8) ──────────────────────────────────────────
   # When the HA toggle below is ON the house is treated as empty: every room
@@ -89,7 +89,23 @@ targets:
       rooms:
         # Bedrooms: tighter band — sleeping comfort matters more than default
         master_bedroom: {min_f: 72, max_f: 74}
-        kids_bedroom:   {min_f: 70, max_f: 74}
+        kids_bedroom:   {min_f: 72, max_f: 74}
+        # bedroom_ac also covers anna_office — widen it so the AC isn't split
+        # between sleeping people and an empty office
+        anna_office:    {min_f: 65, max_f: 85}
+        # living_ac zone: all unoccupied at night → let living_ac go quiet
+        dining_room:    {min_f: 65, max_f: 79}
+        kitchen:        {min_f: 65, max_f: 85}
+        family_room:    {min_f: 65, max_f: 78}
+        # extension_ac zone: both rooms empty at night → extension_ac goes off
+        tv_room:        {min_f: 65, max_f: 79}
+        nicolas_office: {min_f: 65, max_f: 85}
+    - name: night            # 22:00 → 06:00
+      time: "00:30"
+      rooms:
+        # Bedrooms: tighter band — sleeping comfort matters more than default
+        master_bedroom: {min_f: 72, max_f: 75}
+        kids_bedroom:   {min_f: 72, max_f: 75}
         # bedroom_ac also covers anna_office — widen it so the AC isn't split
         # between sleeping people and an empty office
         anna_office:    {min_f: 65, max_f: 85}

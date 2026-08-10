@@ -75,7 +75,7 @@ rooms:
 
   # sensor data source column: "Family Room Temperature"
   - id: family_room
-    sensor_entity: sensor.family_room_temperature
+    sensor_entity: sensor.aquarium_temperature
     csv_column: "Family Room Temperature"
     exterior_walls: true
     thermostat_entity: climate.mpc_family_room
