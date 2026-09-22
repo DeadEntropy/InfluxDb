@@ -56,7 +56,7 @@ targets:
   # Comfort band in °F — penalty applied outside this range
   default:
     min_f: 75
-    max_f: 78
+    max_f: 77
 
   # ── Away / holiday mode (item 8) ──────────────────────────────────────────
   # When the HA toggle below is ON the house is treated as empty: every room
