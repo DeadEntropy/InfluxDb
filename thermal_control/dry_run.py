@@ -24,7 +24,7 @@ import yaml
 from thermal_control.model.simulate   import HouseSimulator
 from thermal_control.control.mpc      import BangBangMPC
 from thermal_control.control.forecast import build_outdoor_series
-from thermal_control.control.schedule import resolve_targets_for_rooms
+from thermal_control.control.schedule import resolve_targets_for_rooms, scheduled_bands
 from thermal_control.ha_bridge        import controller as ha
 
 FALLBACK_TEMP_F = 74.0
@@ -62,7 +62,9 @@ presence   = {} if away else ha.get_presence(house)
 unoccupied = {r for r, occ in presence.items() if not occ}
 overrides  = {}
 if not away:
-    scheduled = resolve_targets_for_rooms(control, sim.rooms, now_local)
+    # Mirrors what the live scheduler writes to the thermostat cards, so the
+    # comparison below detects the same edits it would.
+    scheduled = scheduled_bands(control, sim.rooms, now_local)
     overrides = {r: t for r, t in ha.get_room_targets(house).items()
                  if t != scheduled[r]["max_f"]}
 targets    = resolve_targets_for_rooms(control, sim.rooms, now_local,
@@ -70,8 +72,10 @@ targets    = resolve_targets_for_rooms(control, sim.rooms, now_local,
                                        override_targets=overrides)
 print(f"\nAway mode: {'ON — holiday bands' if away else 'off'}")
 if presence:
-    print("Presence: " + ", ".join(f"{r}={'occupied' if occ else 'EMPTY'}"
-                                    for r, occ in sorted(presence.items())))
+    print("Presence: " + ", ".join(
+        f"{r}={'occupied' if occ else 'EMPTY'} "
+        f"→ {targets[r]['min_f']:.0f}–{targets[r]['max_f']:.0f}°F"
+        for r, occ in sorted(presence.items()) if r in targets))
 if overrides:
     print("Overrides: " + ", ".join(f"{r}→{t}°F" for r, t in sorted(overrides.items())))
 killed = ha.get_killed_acs(house)

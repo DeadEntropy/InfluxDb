@@ -43,7 +43,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from thermal_control.model.simulate      import HouseSimulator
 from thermal_control.control.mpc         import BangBangMPC
 from thermal_control.control.forecast    import build_outdoor_series
-from thermal_control.control.schedule    import resolve_targets_for_rooms, update_override_tracker
+from thermal_control.control.schedule    import (resolve_targets_for_rooms, scheduled_bands,
+                                                 update_override_tracker)
 from thermal_control.ha_bridge           import controller as ha
 from thermal_control                     import log_writer
 from thermal_control                     import config_reload
@@ -177,9 +178,15 @@ def run():
 
     local_tz = ZoneInfo(house["location"]["timezone"])
     _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
-    for handler in logging.root.handlers + config_reload.config_error_logger.handlers:
+    for handler in (logging.root.handlers
+                    + config_reload.config_error_logger.handlers
+                    + config_reload.config_warning_logger.handlers):
         if handler.formatter:
             handler.formatter.converter = _local_time
+
+    # Report any degraded presence band in the config we're starting on; reloads
+    # get the same treatment inside maybe_reload().
+    config_reload.log_band_warnings(house, control)
 
     sim = HouseSimulator(config_reload.WEIGHTS_DIR, house)
     mpc = BangBangMPC(sim, house, control)
@@ -280,7 +287,11 @@ def run():
                 #     target: the away band max when away, else the scheduled max.
                 #     The scheduler keeps the card synced to that and reads it back
                 #     to detect user edits (a value ≠ what it last wrote).
-                display_bands  = resolve_targets_for_rooms(control, sim.rooms, now_dt, away=away)
+                #     Deliberately the schedule *as written* — presence (item 11)
+                #     and overrides don't move the card, so a conditional band
+                #     shows its `unoccupied` value even while the MPC targets the
+                #     occupied one.
+                display_bands  = scheduled_bands(control, sim.rooms, now_dt, away=away)
                 display_target = {r["id"]: display_bands[r["id"]]["max_f"]
                                   for r in house["rooms"] if r.get("thermostat_entity")}
                 raw_targets    = ha.get_room_targets(house)

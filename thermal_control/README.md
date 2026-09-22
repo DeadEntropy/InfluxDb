@@ -42,7 +42,8 @@ the physical controller sensor locations entirely.
 Every 10 minutes:
   1. Read all room temperatures from independent Zigbee sensors
   2. Resolve the active schedule entry → per-room comfort bands
-     (e.g. offices get a wide band at night so the MPC ignores them)
+     (e.g. offices get a wide band at night so the MPC ignores them —
+      unless a presence sensor says someone is actually in there)
   3. Evaluate all 2³ = 8 AC on/off combinations using the thermal model
      (predict what each room will be in 3 hours under each combination)
   4. Pick the combination that minimises total discomfort + energy use

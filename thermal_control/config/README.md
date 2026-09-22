@@ -79,6 +79,53 @@ room as "don't care" — the discomfort penalty in the cost function becomes
 zero at any realistic indoor temperature, so the MPC will not run an AC
 unit purely to service that room.
 
+### Presence-conditional bands (item 11)
+
+Inside a schedule entry, a room with a `presence_entity` in `house.yaml` can
+name one band per presence state instead of a single flat band:
+
+```yaml
+    - name: sleeping
+      time: "22:00"
+      rooms:
+        master_bedroom: {min_f: 72, max_f: 74}              # flat, as always
+        nicolas_office: {occupied: {min_f: 65, max_f: 76}}  # conditional
+```
+
+Because an unoccupied room already defaults to the wide 65–85°F band (item 9,
+below), **omitting `unoccupied:` means exactly that** — so the common "ignore
+this room unless someone's actually in it" rule costs one key. Spell it out only
+when the empty-room band should be something else:
+
+```yaml
+        nicolas_office:
+          unoccupied: {min_f: 65, max_f: 78}
+          occupied:   {min_f: 65, max_f: 76}
+```
+
+Omitting `occupied:` makes the room fall through to static/default as if it
+weren't listed in the entry at all.
+
+Scoping this per entry is deliberate: it means the rule only applies during the
+hours you choose. `nicolas_office` holds 76°F when occupied in the evening and
+overnight, and is untouched during the day.
+
+Two constraints:
+
+- **Schedule entries only.** `targets.default` and the static per-room block beat
+  the schedule at all times, so a conditional there would be an always-on
+  presence rule. One written there is ignored and warned about.
+- **Don't mix forms.** Giving a room both `min_f`/`max_f` *and*
+  `occupied`/`unoccupied` is an inconsistency: the flat band wins (the
+  unconditional fallback) and the presence keys are ignored.
+
+A malformed rule — mixed forms, a typo'd key like `occuppied:`, an incomplete
+band, or a conditional on a room with no `presence_entity` — **never rejects the
+config**. It degrades to the unconditional reading and is reported two ways:
+`logs/config_warnings.log` and an amber banner on the dashboard. That's separate
+from the red "config rejected" banner, which means the edit didn't take at all
+and the MPC is still running its last-good config.
+
 ### Priority order (highest wins)
 
 0. **Away / holiday mode** (`targets.away`, item 8) — when the HA toggle
@@ -88,9 +135,12 @@ unit purely to service that room.
    (in `house.yaml`) shifts the resolved band by N°F (both bounds) for
    `mpc.override_duration_minutes`, then the scheduler resets it to 0. Beats
    presence; yields to away mode.
-0b. **Presence** (item 9) — a room whose `presence_entity` (in `house.yaml`)
+0b. **Presence** (items 9/11) — a room whose `presence_entity` (in `house.yaml`)
    reports `off` drops to the wide 65–85°F "don't care" band. Beats the
    schedule/static band but yields to away mode and a manual override.
+   This blanket rule is skipped for a room whose *active* schedule entry states a
+   presence-conditional band — that entry has already said what the room gets in
+   each state, and it is the more specific answer.
 1. Static `targets.<room_id>` override
 2. Active schedule entry `rooms.<room_id>`
 3. `targets.default`

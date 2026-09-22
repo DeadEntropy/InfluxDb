@@ -15,41 +15,64 @@ import yaml
 
 from thermal_control.model.simulate       import HouseSimulator
 from thermal_control.control.mpc          import BangBangMPC
-from thermal_control.control.config_check import validate_config_structure
+from thermal_control.control.config_check import (
+    collect_band_warnings, validate_config_structure,
+)
 
 ROOT         = Path(__file__).parent
 WEIGHTS_DIR  = ROOT / "model" / "weights"
 HOUSE_YAML   = ROOT / "config" / "house.yaml"
 CONTROL_YAML = ROOT / "config" / "control.yaml"
 ERROR_LOG    = ROOT / "logs" / "errors.log"   # rejected config reloads land here
+# Accepted-but-degraded edits (item 11) land here instead of errors.log: the
+# dashboard date-stamps its "config rejected" banner from the last line of
+# errors.log, so a warning written there would put a bogus "since" on an alarm
+# about something else entirely.
+WARNING_LOG  = ROOT / "logs" / "config_warnings.log"
 
 logger = logging.getLogger(__name__)
 
 
-def _make_config_error_logger():
+def _make_file_logger(name, path, level):
     """
-    Dedicated logger for rejected config hot-reloads, writing to errors.log.
-
-    Kept separate from the main INFO stream so an operator who edits a yaml on
-    the server has one file to tail for "did my edit take?". propagate=False so
-    these lines don't also flood stdout; the main logger still records a copy.
+    Dedicated file logger for config feedback, kept separate from the main INFO
+    stream so an operator who edits a yaml on the server has one file to tail
+    for "did my edit take?". propagate=False so these lines don't also flood
+    stdout; the main logger still records a copy.
     """
-    el = logging.getLogger("thermal_control.config_errors")
-    el.setLevel(logging.ERROR)
-    el.propagate = False
+    fl = logging.getLogger(name)
+    fl.setLevel(level)
+    fl.propagate = False
     try:
-        ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(ERROR_LOG)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path)
         handler.setFormatter(logging.Formatter(
             "%(asctime)s  %(levelname)-8s  %(message)s", "%Y-%m-%d %H:%M:%S"))
-        el.addHandler(handler)
+        fl.addHandler(handler)
     except OSError as exc:
-        logger.warning(f"Could not open {ERROR_LOG}: {exc}")
-    return el
+        logger.warning(f"Could not open {path}: {exc}")
+    return fl
 
 
-config_error_logger = _make_config_error_logger()
+config_error_logger   = _make_file_logger(
+    "thermal_control.config_errors", ERROR_LOG, logging.ERROR)
+config_warning_logger = _make_file_logger(
+    "thermal_control.config_warnings", WARNING_LOG, logging.WARNING)
+
 _last_reload_error_mtimes = None   # de-dupes repeated errors for one broken edit
+
+
+def log_band_warnings(house, control):
+    """
+    Record presence-conditional band problems (item 11) for an edit that was
+    *accepted*. Call sites are mtime-gated (initial load + each successful
+    reload), so a standing problem is logged once per edit, not once per tick.
+    """
+    warnings = collect_band_warnings(house, control)
+    for warning in warnings:
+        config_warning_logger.warning(warning)
+        logger.warning(f"Config warning — {warning}")
+    return warnings
 
 
 def load_configs():
@@ -105,4 +128,6 @@ def maybe_reload(known_mtimes):
     _last_reload_error_mtimes = None
     logger.info("Config change detected — validated and reloaded "
                 "house.yaml/control.yaml, rebuilt simulator and MPC")
+    # Accepted — but a degraded presence band (item 11) still gets reported.
+    log_band_warnings(house, control)
     return house, control, sim, mpc, mtimes

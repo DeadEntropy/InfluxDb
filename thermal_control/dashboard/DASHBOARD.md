@@ -30,6 +30,20 @@ are displayed rounded to the nearest **0.5 °F**.
   config is fixed, even though `errors.log` still records the past breakage.
   `errors.log` (written by the scheduler) only supplies the "since" time.
 
+### Config-warning banner
+- A separate **amber** banner for a different, non-fatal state: the config on
+  disk is **valid and live**, but a presence-conditional band (item 11) was
+  malformed and silently degraded to its unconditional reading — a mixed
+  flat+conditional band, a typo'd key, an incomplete band, or a conditional on a
+  room with no `presence_entity`. It lists each affected entry/room.
+- Kept visually and semantically distinct from the red banner on purpose: red
+  means "your edit was rejected, the MPC is on an older config", amber means
+  "your edit is running, but this one rule isn't". Showing the same alarm for
+  both would mislead.
+- Computed per render by `control/config_check.py::collect_band_warnings`, the
+  same walk the scheduler logs to `logs/config_warnings.log`. Never read from a
+  log, so it clears as soon as the yaml is fixed.
+
 ### Section 1 — Schedule grid
 - One row per modelled room, grouped under its AC zone (bedroom_ac / living_ac /
   extension_ac), with 24 hourly columns (00:00–23:00).
@@ -39,6 +53,10 @@ are displayed rounded to the nearest **0.5 °F**.
 - Colour scale by band tightness: a tight band (strong cooling intent) is
   highlighted; the wide 65–85 °F "don't care" band (shown as `off`) is greyed
   out. Tooltip shows the exact min/max °F.
+- **Presence-conditional cells** (item 11) carry a blue underline and a `°`
+  marker. The grid has no live presence to choose with, so the cell shows the
+  **empty-house** band and the tooltip gives both, e.g.
+  `65–85°F when empty — 65–76°F when occupied`.
 - **Current-hour column is highlighted** (blue outline) so "what matters now"
   stands out. It only highlights when the displayed day matches today, so the
   highlight disappears when you toggle to the other day type.
@@ -74,14 +92,15 @@ are displayed rounded to the nearest **0.5 °F**.
   control panel (1D/3D/1W/1M/ALL/Custom) picks the time window shown across
   all three panels.
   Band values are resolved per-row with the same `resolve_targets_for_rooms()`
-  the live MPC uses (`thermal_control/control/schedule.py`), so weekday/
-  weekend schedule entries and (item 8) away/holiday mode are both correct for
-  that row's actual historical moment — away periods are reconstructed from
-  `away_activated`/`away_deactivated` events in `user_inputs.log`, since away
-  isn't itself a decision-log column. Manual overrides and presence-based
-  "unoccupied" bands are *not* reconstructed historically (only away is), so a
-  room that was under an active override or briefly unoccupied at some past
-  tick will show its plain scheduled band there instead.
+  the live MPC uses (`thermal_control/control/schedule.py`), so weekday/weekend
+  schedule entries are correct for that row's actual historical moment. The three
+  inputs that aren't decision-log columns are each reconstructed from
+  `user_inputs.log`: away/holiday periods (item 8) from
+  `away_activated`/`away_deactivated`, manual overrides (items 7/7b) from the
+  `override_*` events, and presence (items 9/11) from
+  `presence_occupied`/`presence_unoccupied`. A room with no presence event yet —
+  including all history from before presence logging existed — counts as
+  occupied, matching `get_presence()`'s fail-safe.
   Data comes from `GET /plots/onoff_data.json?ac=<id>&range=...` (JSON);
   rendering happens client-side in `static/plots.js` so switching the range or
   toggling a room never reloads the page. Plotly.js itself is served locally
@@ -100,6 +119,11 @@ are displayed rounded to the nearest **0.5 °F**.
 | `remote_logs/mpc_decision_log.csv`     | current + recent decisions, temps, costs |
 | `remote_logs/user_inputs.log`          | active overrides / presence events |
 | `remote_logs/errors.log`               | "since" time for the config-error banner |
+
+(The amber config-warning banner reads no log — it re-walks the on-disk yaml on
+each render. The scheduler's copy of those warnings goes to
+`logs/config_warnings.log`, deliberately *not* `errors.log`, which the red
+banner date-stamps from.)
 
 ## Where it reads the logs from
 

@@ -13,6 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
+import yaml
 
 from thermal_control.dashboard import app as dash
 
@@ -39,8 +40,9 @@ def dash_paths(tmp_path, monkeypatch):
 
 
 def test_valid_config_no_error_and_caches(dash_paths):
-    control, house, err = dash.resolve_page_config()
+    control, house, err, warnings = dash.resolve_page_config()
     assert err is None
+    assert warnings == []                                 # real config is clean
     assert control is not None and house is not None
     assert dash._last_good_cfg["control"] is not None     # cached as last-good
 
@@ -50,7 +52,7 @@ def test_broken_yaml_falls_back_to_last_good(dash_paths):
     dash.resolve_page_config()                            # prime last-good
     (cfg / "control.yaml").write_text("mpc:\n  tick_minutes: 10\n   bad: x\n")
 
-    control, house, err = dash.resolve_page_config()
+    control, house, err, _ = dash.resolve_page_config()
     assert err is not None
     assert "Invalid YAML syntax" in err["message"]
     assert control is not None                            # served last-good, page still works
@@ -61,7 +63,7 @@ def test_structurally_invalid_config_flagged(dash_paths):
     dash.resolve_page_config()
     (cfg / "control.yaml").write_text("mpc:\n  tick_minutes: 10\n")   # valid yaml, no 'targets'
 
-    _, _, err = dash.resolve_page_config()
+    _, _, err, _ = dash.resolve_page_config()
     assert err is not None
     assert "targets" in err["message"]
 
@@ -84,7 +86,7 @@ def test_since_read_from_errors_log(dash_paths):
     dash.resolve_page_config()
     (cfg / "control.yaml").write_text("mpc:\n  tick_minutes: 10\n")
 
-    _, _, err = dash.resolve_page_config()
+    _, _, err, _ = dash.resolve_page_config()
     assert err["since"] == "2026-06-15 14:23"
 
 
@@ -103,6 +105,64 @@ def test_index_renders_banner_when_broken(dash_paths):
     html = dash.app.test_client().get("/").get_data(as_text=True)
     assert "config-error" in html                         # banner div present
     assert "Schedule the MPC sees" in html                # rest of page still renders
+
+
+# ── Degraded presence band → amber banner (NEXT_STEPS item 11) ───────────────
+def _degrade_control_yaml(cfg):
+    """Rewrite the copied control.yaml with a mixed (flat + conditional) band."""
+    control = yaml.safe_load((cfg / "control.yaml").read_text(encoding="utf-8"))
+    control["targets"]["schedule"][0]["rooms"]["nicolas_office"] = {
+        "min_f": 65, "max_f": 85, "occupied": {"min_f": 65, "max_f": 76},
+    }
+    (cfg / "control.yaml").write_text(yaml.safe_dump(control), encoding="utf-8")
+
+
+def test_degraded_band_warns_but_config_stays_live(dash_paths):
+    cfg, _ = dash_paths
+    _degrade_control_yaml(cfg)
+
+    control, house, err, warnings = dash.resolve_page_config()
+    assert err is None                                    # NOT rejected…
+    assert control is not None                            # …the on-disk config is live
+    assert warnings                                       # …but reported
+    assert "both a flat band and occupied/unoccupied" in " | ".join(warnings)
+
+
+def test_index_renders_amber_banner_not_red_when_degraded(dash_paths):
+    cfg, _ = dash_paths
+    _degrade_control_yaml(cfg)
+
+    html = dash.app.test_client().get("/").get_data(as_text=True)
+    assert "config-warning" in html                       # amber banner shown
+    assert "config-error" not in html                     # red one must NOT fire
+    assert "Schedule the MPC sees" in html                # page renders in full
+
+
+def test_warning_clears_once_fixed(dash_paths):
+    cfg, _ = dash_paths
+    _degrade_control_yaml(cfg)
+    assert dash.resolve_page_config()[3]                   # degraded → warning
+
+    shutil.copy(GOOD_CONTROL, cfg / "control.yaml")        # operator fixes it
+    assert dash.resolve_page_config()[3] == []             # clears on next render
+
+
+def test_schedule_grid_marks_a_conditional_band(dash_paths):
+    control, house, _, _ = dash.resolve_page_config()
+    grid = dash.schedule_grid(control, ["nicolas_office"], "weekday")
+
+    marked = [c for c in grid["nicolas_office"] if "band-presence" in c["cls"]]
+    assert marked, "the live config's nicolas_office evening rule should be marked"
+    cell = marked[0]
+    # The cell shows the empty-house band; the occupied one lives in the tooltip.
+    assert cell["occupied_label"] == "65–76"
+    assert "when occupied" in cell["title"]
+
+
+def test_schedule_grid_leaves_flat_bands_unmarked(dash_paths):
+    control, house, _, _ = dash.resolve_page_config()
+    grid = dash.schedule_grid(control, ["master_bedroom"], "weekday")
+    assert all("band-presence" not in c["cls"] for c in grid["master_bedroom"])
 
 
 # ── Plot time-range selector (resolve_plot_range / _filter_range) ─────────────

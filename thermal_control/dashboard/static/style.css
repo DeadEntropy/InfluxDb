@@ -7,6 +7,7 @@
   --accent: #4aa3ff;
   --ok: #3fb950;
   --bad: #f85149;
+  --warn: #d29922;
 }
 
 * { box-sizing: border-box; }
@@ -95,6 +96,12 @@ table.grid th { color: var(--muted); font-weight: 500; }
 .band-wide     { background: #161b22; color: #4a5562; }
 .band-override { background: #5a3a0f; color: #ffcf7a; font-weight: 600; }
 
+/* Presence-conditional band (item 11). Appended to whichever band-* class the
+   unoccupied branch produced, so it must not set a background of its own —
+   an inset rule marks the cell and still reads standalone in the legend. */
+.band-presence { box-shadow: inset 0 -2px 0 var(--accent); }
+.pres-mark { color: var(--accent); font-weight: 700; margin-left: 1px; }
+
 /* current-hour column highlight */
 table.grid th.now-col { color: #fff; background: #2a3a18; }
 table.grid td.now-col {
@@ -104,6 +111,7 @@ table.grid td.now-col {
 
 .legend { margin-top: 10px; display: flex; gap: 8px; font-size: 11px; }
 .legend span { padding: 2px 8px; border-radius: 4px; }
+.legend-note { margin-top: 6px; font-size: 11px; color: var(--muted); }
 
 /* ── status ────────────────────────────────────────────────── */
 .status-meta { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
@@ -275,3 +283,24 @@ footer code {
 }
 .config-error .ce-since { color: var(--muted); }
 .config-error .ce-hint { color: var(--muted); font-style: italic; }
+
+/* Live config-WARNING banner — deliberately distinct from .config-error above:
+   red means the edit was rejected and the MPC is on its last-good config, amber
+   means the edit is live but one presence-conditional band (item 11) degraded
+   to its unconditional reading. Same alarm styling for both would mislead. */
+.config-warning {
+  padding: 12px 24px;
+  background: rgba(210, 153, 34, .14);
+  border-bottom: 2px solid var(--warn);
+  color: #f2e2bd;
+  font-size: 13px;
+}
+.config-warning strong { color: var(--warn); }
+.config-warning .cw-msg { color: #e8d3a0; }
+.config-warning .cw-list {
+  margin: 6px 0;
+  padding-left: 22px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #e8d3a0;
+}
+.config-warning .ce-hint { color: var(--muted); font-style: italic; }

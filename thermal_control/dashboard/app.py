@@ -29,7 +29,8 @@ from flask import Flask, render_template, request, Response, abort, jsonify
 import plotly.offline as plotly_offline
 
 from thermal_control.control.schedule import resolve_targets, resolve_targets_for_rooms
-from thermal_control.control.config_check import validate_config_structure
+from thermal_control.control.config_check import (collect_band_warnings,
+                                                  validate_config_structure)
 from thermal_control.analysis.onoff_plot import AC_UNITS, AC_ROOMS
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -141,6 +142,11 @@ def schedule_grid(control_cfg, rooms, day_type, current_hour=None, ovr_map=None)
 
     Bands are produced by the real resolve_targets() for an example date of the
     requested day_type, so the grid matches exactly what the MPC resolves.
+
+    A presence-conditional band (item 11) has two values per hour and the grid
+    has no live presence to choose with, so the cell shows the `unoccupied`
+    branch — the schedule as written when nobody is home — and carries the
+    `band-presence` marker plus the occupied variant in its tooltip.
     """
     tz = ZoneInfo(TZ_NAME)
     # Pick a reference date matching the requested day type (weekday/weekend).
@@ -156,7 +162,10 @@ def schedule_grid(control_cfg, rooms, day_type, current_hour=None, ovr_map=None)
     grid = {r: [] for r in rooms}
     for hour in range(24):
         now = datetime(ref.year, ref.month, ref.day, hour, 0, tzinfo=tz)
-        resolved = resolve_targets(control_cfg, now)
+        # Resolve both presence branches: the empty-house view is what the cell
+        # shows, and the difference is what marks a conditional band.
+        resolved = resolve_targets(control_cfg, now, occupied_rooms=set())
+        occupied = resolve_targets(control_cfg, now, occupied_rooms=set(rooms))
         default = control_cfg["targets"]["default"]
         is_now = (hour == current_hour)
         for room in rooms:
@@ -170,6 +179,12 @@ def schedule_grid(control_cfg, rooms, day_type, current_hour=None, ovr_map=None)
                 "is_now": is_now,
                 "title": f"{band['min_f']:.0f}–{band['max_f']:.0f}°F",
             }
+            occ = occupied.get(room, dict(default))
+            if occ != band:
+                cell["cls"] += " band-presence"
+                cell["occupied_label"] = band_label(occ)
+                cell["title"] = (f"{cell['title']} when empty — "
+                                 f"{occ['min_f']:.0f}–{occ['max_f']:.0f}°F when occupied")
             # An active override only applies right now → annotate the now-cell.
             if is_now and room in ovr_map:
                 ob = apply_override(band, ovr_map[room])
@@ -273,8 +288,16 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
     except (ValueError, KeyError):
         ts, age_min = None, None
 
-    # Resolved bands at the decision's wall-clock time (so temp vs band lines up).
-    band_now = resolve_targets(control_cfg, ts or now)
+    # Resolved bands at the decision's wall-clock time (so temp vs band lines
+    # up), including which rooms were reported empty then — an unoccupied room
+    # was targeted at its wide/`unoccupied` band, not its scheduled one.
+    # Overrides are applied per-room below, so they are deliberately not passed
+    # here; `sched` stays the pre-override band the rows show for reference.
+    at = ts or now
+    band_now = resolve_targets_for_rooms(
+        control_cfg, rooms, at,
+        unoccupied=_unoccupied_at(_unoccupied_series(), rooms, at),
+    )
     default = control_cfg["targets"]["default"]
 
     # AC states
@@ -519,26 +542,80 @@ def _overrides_at(override_series, room_ids, ts):
     return out
 
 
+def _unoccupied_series():
+    """{room_id: [(start, end), ...]} when a room was reported EMPTY, from the
+    presence_occupied/presence_unoccupied events in user_inputs.log — the
+    presence analogue of _override_series(). A still-open period gets end=now.
+
+    Only rooms that appear in the log are keyed; every other room (and every
+    moment before a room's first event) counts as occupied, which matches
+    get_presence()'s fail-safe and keeps band lines for history recorded before
+    presence logging existed exactly where they were."""
+    if not USER_INPUTS.exists():
+        return {}
+    tz  = ZoneInfo(TZ_NAME)
+    now = datetime.now(tz)
+
+    events_by_room = {}
+    with open(USER_INPUTS, newline="") as f:
+        for row in csv.DictReader(f):
+            event = (row.get("event") or "").strip()
+            room  = (row.get("room") or "").strip()
+            if not room or event not in ("presence_occupied", "presence_unoccupied"):
+                continue
+            try:
+                ts = parse_ts(row["timestamp"])
+            except (ValueError, KeyError):
+                continue
+            events_by_room.setdefault(room, []).append((ts, event))
+
+    out = {}
+    for room, events in events_by_room.items():
+        events.sort(key=lambda e: e[0])
+        intervals = []
+        start = None
+        for ts, event in events:
+            if event == "presence_unoccupied" and start is None:
+                start = ts
+            elif event == "presence_occupied" and start is not None:
+                intervals.append((start, ts))
+                start = None
+        if start is not None:
+            intervals.append((start, now))
+        out[room] = intervals
+    return out
+
+
+def _unoccupied_at(unoccupied_series, room_ids, ts):
+    """Set of room_ids reported empty at `ts`, from _unoccupied_series()."""
+    return {room for room in room_ids
+            if any(start <= ts <= end
+                   for start, end in unoccupied_series.get(room, []))}
+
+
 def _room_series(df, control_cfg, ac):
     """[{id, label, color, temp, band_lo, band_hi}, ...] for the rooms this AC
     covers that have a temperature column in df. band_lo/band_hi are the
     comfort band actually in effect at each row's own timestamp (piecewise
     constant) — schedule-resolved, except during a logged away/holiday period
-    (every room gets the away band instead) or a logged manual override on
-    that room (the band's upper bound follows the user's value). Both are
-    reconstructed from user_inputs.log, since neither is itself a
-    decision-log column, and mirror what the MPC actually targeted at that
-    moment."""
+    (every room gets the away band instead), a logged manual override on that
+    room (the band's upper bound follows the user's value), or a logged
+    unoccupied period (the wide band, or the entry's `unoccupied` branch where
+    it states one). All three are reconstructed from user_inputs.log, since none
+    is itself a decision-log column, and mirror what the MPC actually targeted
+    at that moment."""
     room_ids = [r for r in AC_ROOMS.get(ac, []) if f"T_{r}" in df.columns]
     if not room_ids:
         return []
 
     away_intervals = _away_intervals()
     override_series = _override_series()
+    unoccupied_series = _unoccupied_series()
     resolved = [
         resolve_targets_for_rooms(
             control_cfg, room_ids, ts,
             away=_is_away(away_intervals, ts),
+            unoccupied=_unoccupied_at(unoccupied_series, room_ids, ts),
             override_targets=_overrides_at(override_series, room_ids, ts),
         )
         for ts in df["timestamp"]
@@ -578,7 +655,7 @@ def onoff_data():
     if df.empty or on_col not in df.columns:
         return jsonify({"ac": ac, "range": range_code, "timestamps": [], "on": [], "rooms": []})
 
-    control_cfg, _, _ = resolve_page_config()
+    control_cfg, _, _, _ = resolve_page_config()
     return jsonify({
         "ac": ac,
         "range": range_code,
@@ -620,7 +697,8 @@ _last_good_cfg = {"control": None, "house": None}
 
 def resolve_page_config():
     """
-    Load the config for a page render. Returns (control_cfg, house_cfg, error).
+    Load the config for a page render. Returns (control_cfg, house_cfg, error,
+    warnings).
 
     Liveness is decided by re-validating the on-disk yaml right now — the exact
     check the scheduler runs before adopting an edit (yaml syntax → required
@@ -630,6 +708,14 @@ def resolve_page_config():
     broken edit shows a banner without taking the whole dashboard down. The
     moment the edit is fixed the next render validates clean and the banner
     clears — regardless of what errors.log still records about past breakage.
+
+    `warnings` is the separate, non-fatal channel (item 11): the config IS live,
+    but a presence-conditional band was malformed and silently degraded to its
+    unconditional reading. Computed from the same live re-validation, never read
+    from a log, so it clears as soon as the yaml is fixed. Empty whenever the
+    config failed outright — the reported bands would be the last-good ones, not
+    what's on disk, and pairing a stale warning with the red banner would only
+    confuse.
     """
     try:
         house = load_yaml(HOUSE_YAML)
@@ -645,12 +731,16 @@ def resolve_page_config():
         message = f"{type(exc).__name__}: {exc}"
     else:
         _last_good_cfg["control"], _last_good_cfg["house"] = control, house
-        return control, house, None
+        try:
+            warnings = collect_band_warnings(house, control)
+        except Exception:                     # never let a warning walk break the page
+            warnings = []
+        return control, house, None, warnings
 
     since = _last_error_log_time()
     error = {"message": message,
              "since": since.strftime("%Y-%m-%d %H:%M") if since else None}
-    return _last_good_cfg["control"], _last_good_cfg["house"], error
+    return _last_good_cfg["control"], _last_good_cfg["house"], error, []
 
 
 # ── Build versions (footer) ────────────────────────────────────────────────────
@@ -682,7 +772,7 @@ def index():
     range_start_raw = request.args.get("start", "")
     range_end_raw = request.args.get("end", "")
 
-    control_cfg, house_cfg, config_error = resolve_page_config()
+    control_cfg, house_cfg, config_error, config_warnings = resolve_page_config()
     now = datetime.now(ZoneInfo(TZ_NAME))
 
     # Broken config on disk AND no last-good cached yet (dashboard started while
@@ -691,7 +781,7 @@ def index():
     if control_cfg is None or house_cfg is None:
         return render_template(
             "index.html",
-            config_error=config_error,
+            config_error=config_error, config_warnings=config_warnings,
             day_type=day_type, zones=[], hours=list(range(24)),
             current_hour=None, grid={}, overrides=[], decision=None,
             range_code=range_code, range_start_raw=range_start_raw,
@@ -712,6 +802,7 @@ def index():
     return render_template(
         "index.html",
         config_error=config_error,
+        config_warnings=config_warnings,
         day_type=day_type,
         zones=zones,
         hours=list(range(24)),

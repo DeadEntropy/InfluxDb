@@ -15,6 +15,16 @@
   <span class="ce-hint">Fix config/*.yaml on the server; this clears automatically once it validates.</span>
 </div>
 {% endif %}
+{% if config_warnings %}
+<div class="config-warning" role="alert">
+  <strong>⚠ Presence rule ignored — the config <em>is</em> live.</strong>
+  <span class="cw-msg">The rule{{ 's' if config_warnings|length > 1 }} below fell back to the unconditional band:</span>
+  <ul class="cw-list">
+    {% for w in config_warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+  <span class="ce-hint">Fix config/control.yaml on the server; this clears automatically once it validates.</span>
+</div>
+{% endif %}
 <header>
   <h1>MPC Thermal Dashboard</h1>
   <span class="muted">refreshed {{ refreshed }}</span>
@@ -62,7 +72,7 @@
           <td class="room-col">{{ room }}</td>
           {% for cell in grid[room] %}
           <td class="{{ cell.cls }} {{ 'now-col' if cell.is_now }}" title="{{ cell.title }}">
-            {{ cell.label }}
+            {{ cell.label }}{% if cell.occupied_label %}<span class="pres-mark">°</span>{% endif %}
           </td>
           {% endfor %}
         </tr>
@@ -75,6 +85,11 @@
     <span class="band-mid">mid</span>
     <span class="band-loose">loose</span>
     <span class="band-wide">off / don't care</span>
+    <span class="band-presence">tighter when occupied<span class="pres-mark">°</span></span>
+  </div>
+  <div class="legend-note">
+    Cells show the band when the room is <em>empty</em>; hover a marked cell for
+    the occupied one.
   </div>
 </section>
 
