@@ -155,7 +155,14 @@ def test_schedule_grid_marks_a_conditional_band(dash_paths):
     assert marked, "the live config's nicolas_office evening rule should be marked"
     cell = marked[0]
     # The cell shows the empty-house band; the occupied one lives in the tooltip.
-    assert cell["occupied_label"] == "65–76"
+    # The expected label is derived from the live config, not hardcoded, so
+    # retuning the occupied cap can't stale this test out (cf. the same fix to
+    # test_resolve_for_rooms_priority_chain).
+    occupied = next(e["rooms"]["nicolas_office"]["occupied"]
+                    for e in control["targets"]["schedule"]
+                    if isinstance(e.get("rooms", {}).get("nicolas_office"), dict)
+                    and "occupied" in e["rooms"]["nicolas_office"])
+    assert cell["occupied_label"] == f"{occupied['min_f']:g}–{occupied['max_f']:g}"
     assert "when occupied" in cell["title"]
 
 

@@ -107,8 +107,21 @@ Omitting `occupied:` makes the room fall through to static/default as if it
 weren't listed in the entry at all.
 
 Scoping this per entry is deliberate: it means the rule only applies during the
-hours you choose. `nicolas_office` holds 76°F when occupied in the evening and
-overnight, and is untouched during the day.
+hours you choose. `nicolas_office` holds 75°F when occupied from 15:15 onward and
+overnight, and falls to `targets.default` during the rest of the day.
+
+**The trap:** presence only ever *widens* a band on its own (item 9 below). A
+*flat* band inside a schedule entry is unconditional, so presence cannot narrow
+it — including a flat wide `{min_f: 65, max_f: 85}`, which reads as "ignore this
+room, occupied or not". That is what happened to the 15:15 entry: the office ran
+to 77.9°F on 23–25 Sep 2026 with the presence sensor ON. If a room should react
+to presence during an entry's hours, that entry needs the conditional form —
+there is no global rule that tightens.
+
+The room's thermostat card in HA shows whichever branch is live, so the number
+you see is the one the MPC is optimising against. It was previously pinned to the
+`unoccupied` branch, which made a card reading 85 while someone sat in the office
+indistinguishable from a dead presence sensor.
 
 Two constraints:
 

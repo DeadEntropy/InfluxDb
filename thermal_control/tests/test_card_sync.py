@@ -89,3 +89,37 @@ def test_plan_card_revert_resyncs_and_reverts():
         card_synced={"kitchen": 77}, effective={},
     )
     assert writes == {"kitchen": 77}                 # reverted to schedule
+
+
+def test_presence_move_resyncs_card_without_looking_like_an_edit():
+    """Cards now follow presence (item 11), so display_target moves on its own.
+
+    That must not read as a user edit: detection compares the card against what
+    the scheduler last *wrote*, not against the schedule. A real edge on the same
+    tick as a presence flip still wins, because an explicit request beats presence.
+    """
+    # Office empty → card was pinned to the unoccupied 85. Presence flips to
+    # occupied, so display_target drops to 75 while the card still reads 85.
+    detected, writes = cs.plan_card_detection(
+        raw_targets={"nicolas_office": 85}, display_target={"nicolas_office": 75},
+        card_synced={"nicolas_office": 85}, away=False,
+    )
+    assert detected == {}                       # not a user edit
+    revert = cs.plan_card_revert(
+        raw_targets={"nicolas_office": 85}, display_target={"nicolas_office": 75},
+        card_synced={"nicolas_office": 85}, effective={},
+    )
+    assert revert == {"nicolas_office": 75}     # card follows the MPC
+
+    # Same tick, but the user had also dragged the card to 73 → that is an edit,
+    # and plan_card_revert leaves it alone once it is an active override.
+    detected, _ = cs.plan_card_detection(
+        raw_targets={"nicolas_office": 73}, display_target={"nicolas_office": 75},
+        card_synced={"nicolas_office": 85}, away=False,
+    )
+    assert detected == {"nicolas_office": 73}
+    revert = cs.plan_card_revert(
+        raw_targets={"nicolas_office": 73}, display_target={"nicolas_office": 75},
+        card_synced={"nicolas_office": 85}, effective={"nicolas_office": 73},
+    )
+    assert revert == {}

@@ -283,29 +283,13 @@ def run():
                 unoccupied = set()
                 overrides  = {}
 
-                # 6a. Thermostat cards (item 7b). Each card shows an upper-bound
-                #     target: the away band max when away, else the scheduled max.
-                #     The scheduler keeps the card synced to that and reads it back
-                #     to detect user edits (a value ≠ what it last wrote).
-                #     Deliberately the schedule *as written* — presence (item 11)
-                #     and overrides don't move the card, so a conditional band
-                #     shows its `unoccupied` value even while the MPC targets the
-                #     occupied one.
-                display_bands  = scheduled_bands(control, sim.rooms, now_dt, away=away)
-                display_target = {r["id"]: display_bands[r["id"]]["max_f"]
-                                  for r in house["rooms"] if r.get("thermostat_entity")}
-                raw_targets    = ha.get_room_targets(house)
-                detected, writes = card_sync.plan_card_detection(
-                    raw_targets, display_target, card_synced, away
-                )
-                for room, val in writes.items():
-                    ha.set_room_target(house, room, val)
-                    card_synced[room] = val
-
-                if away:
-                    logger.info("Away mode active — using holiday bands")
-                    override_tracker.clear()   # away beats override; drop any tracked
-                else:
+                # 6a0. Presence (items 9/11), read *before* the cards: the card
+                #      shows the band the MPC will actually target, so which
+                #      branch of a conditional band applies has to be known
+                #      first. Away beats presence, so an away tick skips the read
+                #      and leaves every room "occupied" — unused, since the away
+                #      band wins anyway.
+                if not away:
                     presence = ha.get_presence(house)
                     for room, occ in sorted(presence.items()):
                         if presence_state.get(room) != occ:
@@ -321,6 +305,30 @@ def run():
                     if unoccupied:
                         logger.info(f"Unoccupied (MPC ignoring): {', '.join(sorted(unoccupied))}")
 
+                # 6a. Thermostat cards (item 7b). Each card shows an upper-bound
+                #     target: the away band max when away, else the band the MPC
+                #     is optimising against right now. The scheduler keeps the
+                #     card synced to that and reads it back to detect user edits
+                #     (a value ≠ what it last wrote). Presence moves the card
+                #     (item 11) so the number can't contradict the control
+                #     decision; overrides don't, since the card is where an
+                #     override is entered.
+                display_bands  = scheduled_bands(control, sim.rooms, now_dt,
+                                                 away=away, unoccupied=unoccupied)
+                display_target = {r["id"]: display_bands[r["id"]]["max_f"]
+                                  for r in house["rooms"] if r.get("thermostat_entity")}
+                raw_targets    = ha.get_room_targets(house)
+                detected, writes = card_sync.plan_card_detection(
+                    raw_targets, display_target, card_synced, away
+                )
+                for room, val in writes.items():
+                    ha.set_room_target(house, room, val)
+                    card_synced[room] = val
+
+                if away:
+                    logger.info("Away mode active — using holiday bands")
+                    override_tracker.clear()   # away beats override; drop any tracked
+                else:
                     # Manual overrides (items 7/7b): a card edited away from the
                     # schedule holds for override_duration_minutes, then reverts.
                     duration_min = control["mpc"].get("override_duration_minutes", 60)

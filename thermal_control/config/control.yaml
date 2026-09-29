@@ -108,7 +108,7 @@ targets:
         # extension_ac zone: tv_room empty at night; nicolas_office only matters
         # if someone is actually working late (else extension_ac goes off)
         tv_room:        {min_f: 65, max_f: 79}
-        nicolas_office: {occupied: {min_f: 65, max_f: 76},
+        nicolas_office: {occupied: {min_f: 65, max_f: 75},
                          unoccupied: {min_f: 65, max_f: 85}}
     - name: night            # 22:00 → 06:00
       time: "00:30"
@@ -126,7 +126,7 @@ targets:
         # extension_ac zone: tv_room empty at night; nicolas_office only matters
         # if someone is actually working late (else extension_ac goes off)
         tv_room:        {min_f: 65, max_f: 79}
-        nicolas_office: {occupied: {min_f: 65, max_f: 76},
+        nicolas_office: {occupied: {min_f: 65, max_f: 75},
                          unoccupied: {min_f: 65, max_f: 85}}
 
     - name: daytime             # weekdays 06:00 → 15:00
@@ -145,7 +145,12 @@ targets:
       time: "15:15"
       days: weekday
       rooms: 
-        nicolas_office: {min_f: 65, max_f: 85}
+        # Was a flat 65-85 don't-care band, which presence cannot narrow (a flat
+        # band in a schedule entry is unconditional and the global presence rule
+        # only ever widens). The office hit 77.9°F on Sep 23-25 2026 with the
+        # presence sensor ON because of it.
+        nicolas_office: {occupied: {min_f: 65, max_f: 75},
+                         unoccupied: {min_f: 65, max_f: 85}}
         anna_office:    {min_f: 65, max_f: 85}
 
     - name: late afternoon         # 16:30 → 22:00
@@ -167,7 +172,7 @@ targets:
         # Working late → hold it cooler than the 78 an empty office gets
         nicolas_office:
           unoccupied: {min_f: 65, max_f: 78}
-          occupied:   {min_f: 65, max_f: 76}
+          occupied:   {min_f: 65, max_f: 75}
 
   # ── Static per-room overrides (optional, beats schedule at all times) ─────
   # nicolas_office:

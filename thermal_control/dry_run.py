@@ -64,7 +64,8 @@ overrides  = {}
 if not away:
     # Mirrors what the live scheduler writes to the thermostat cards, so the
     # comparison below detects the same edits it would.
-    scheduled = scheduled_bands(control, sim.rooms, now_local)
+    scheduled = scheduled_bands(control, sim.rooms, now_local,
+                                unoccupied=unoccupied)
     overrides = {r: t for r, t in ha.get_room_targets(house).items()
                  if t != scheduled[r]["max_f"]}
 targets    = resolve_targets_for_rooms(control, sim.rooms, now_local,

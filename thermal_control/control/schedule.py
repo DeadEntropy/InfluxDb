@@ -291,23 +291,27 @@ def away_targets(control_cfg: dict, rooms: list) -> dict:
 
 
 def scheduled_bands(control_cfg: dict, rooms: list, now: datetime,
-                    away: bool = False) -> dict:
+                    away: bool = False, unoccupied=None) -> dict:
     """
-    The schedule *as written* for `rooms` — no presence widening, no manual
-    overrides. This is the display view: what the thermostat cards show and what
-    the dashboard's 24h grid draws.
+    The band each room is actually being controlled to, before manual overrides.
+    This is the thermostat-card view.
 
-    Differs from resolve_targets_for_rooms(away=away) in that a
-    presence-conditional band resolves to its `unoccupied` branch, and from
-    resolve_targets_for_rooms(unoccupied=all) in that the blanket
-    "unoccupied → WIDE_BAND" rule is *not* applied — that rule describes a live
-    sensor reading, not the schedule.
+    The card is the only window the user has into what the MPC is doing, so it
+    has to show the band the MPC is really optimising against. It used to render
+    a presence-conditional band's `unoccupied` branch unconditionally, on the
+    reasoning that presence is a live reading and the card shows the schedule.
+    In practice that made a card reading 85 while someone sat in the room
+    indistinguishable from a dead presence sensor, so the card now follows
+    presence: pass the same `unoccupied` set the MPC is given (see
+    resolve_targets_for_rooms). Defaults to empty = everyone home.
+
+    Deliberately delegates rather than reimplementing the priority chain — card
+    and MPC drifting apart is the whole bug this exists to prevent. The only
+    difference from what the MPC uses is `override_targets`: the card is where an
+    override is *entered*, so it shows the value an override would depart from.
     """
-    if away:
-        return away_targets(control_cfg, rooms)
-    resolved = resolve_targets(control_cfg, now, occupied_rooms=set())
-    default  = control_cfg["targets"]["default"]
-    return {room: resolved.get(room, dict(default)) for room in rooms}
+    return resolve_targets_for_rooms(control_cfg, rooms, now, away=away,
+                                     unoccupied=unoccupied)
 
 
 def resolve_targets_for_rooms(control_cfg: dict, rooms: list, now: datetime,

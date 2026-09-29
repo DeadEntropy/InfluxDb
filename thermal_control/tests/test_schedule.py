@@ -231,13 +231,33 @@ def test_static_override_beats_a_conditional_band():
     assert sch.conditional_band_rooms(cfg, MONDAY) == set()
 
 
-def test_scheduled_bands_shows_the_unoccupied_branch():
-    # The display view (thermostat cards, dashboard grid): no live presence, and
-    # crucially no blanket wide-band rule.
+def test_scheduled_bands_follows_presence():
+    # The thermostat card is the user's only window into the MPC, so it shows the
+    # band actually being controlled to, not the empty-room one. A card reading 85
+    # while someone sat in the office is what made this feature look broken.
     cfg = _cfg({"occupied": OCCUPIED, "unoccupied": UNOCCUPIED})
+
+    def card(unoccupied):
+        return sch.scheduled_bands(cfg, ["nicolas_office"], MONDAY,
+                                   unoccupied=unoccupied)["nicolas_office"]
+
+    assert card({"nicolas_office"}) == UNOCCUPIED
+    assert card(set())              == OCCUPIED
+    # No presence argument = everyone home, matching get_presence()'s fail-safe.
     assert sch.scheduled_bands(cfg, ["nicolas_office"], MONDAY) == {
-        "nicolas_office": UNOCCUPIED
+        "nicolas_office": OCCUPIED
     }
+
+
+def test_scheduled_bands_cannot_disagree_with_the_mpc():
+    # Card and MPC showing different numbers was the bug; only an active manual
+    # override may differ, and the card is where that gets entered.
+    cfg   = _cfg({"occupied": OCCUPIED, "unoccupied": UNOCCUPIED})
+    rooms = ["nicolas_office", "kitchen"]
+    for unoccupied in (set(), {"nicolas_office"}):
+        assert (sch.scheduled_bands(cfg, rooms, MONDAY, unoccupied=unoccupied)
+                == sch.resolve_targets_for_rooms(cfg, rooms, MONDAY,
+                                                 unoccupied=unoccupied))
 
 
 def test_scheduled_bands_leaves_other_rooms_on_their_schedule():
@@ -251,22 +271,32 @@ def test_live_config_nicolas_office_evening_and_night(control_config):
     """The real control.yaml: the rule this feature was built for."""
     rooms = ["nicolas_office"]
 
-    def band(hour, occupied):
-        when = datetime(2026, 6, 15, hour, 30)       # Monday
+    def band(hour, minute, occupied):
+        when = datetime(2026, 6, 15, hour, minute)       # Monday
         return sch.resolve_targets_for_rooms(
             control_config, rooms, when,
             unoccupied=set() if occupied else set(rooms),
         )["nicolas_office"]
 
-    # 20:45 early evening — empty keeps today's 78 cap, occupied tightens to 76
-    assert band(21, occupied=False)["max_f"] == 78
-    assert band(21, occupied=True)["max_f"]  == 76
+    # The occupied cap is read from the config rather than hardcoded, so retuning
+    # it can't stale this test out. What must hold is that presence actually
+    # tightens the room at every hour the config says it should.
+    cap = band(23, 0, occupied=True)["max_f"]
+    assert cap < sch.WIDE_BAND["max_f"]
+
+    # 15:15 early afternoon (weekday) — was a flat 65–85 don't-care band, which
+    # presence cannot narrow; the office ran to 77.9°F with someone working in it.
+    assert band(15, 30, occupied=True)["max_f"]  == cap
+    assert band(15, 30, occupied=False)          == sch.WIDE_BAND
+    # 20:45 early evening — empty keeps today's 78 cap, occupied tightens
+    assert band(21, 0, occupied=False)["max_f"]  == 78
+    assert band(21, 0, occupied=True)["max_f"]   == cap
     # 22:00 sleeping — empty is still the wide don't-care band, as before
-    assert band(23, occupied=False) == sch.WIDE_BAND
-    assert band(23, occupied=True)["max_f"] == 76
+    assert band(23, 0, occupied=False)           == sch.WIDE_BAND
+    assert band(23, 0, occupied=True)["max_f"]   == cap
     # 00:30 night — same
-    assert band(1, occupied=False) == sch.WIDE_BAND
-    assert band(1, occupied=True)["max_f"] == 76
+    assert band(1, 0, occupied=False)            == sch.WIDE_BAND
+    assert band(1, 0, occupied=True)["max_f"]    == cap
 
 
 # ── update_override_tracker (NEXT_STEPS items 7/7b) ─────────────────────────
