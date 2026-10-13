@@ -25,6 +25,17 @@
   <span class="ce-hint">Fix config/control.yaml on the server; this clears automatically once it validates.</span>
 </div>
 {% endif %}
+{% if decision and decision.offline %}
+<div class="sensor-offline" role="alert">
+  <strong>⚠ Sensor offline — the MPC is ignoring {{ 'this room' if decision.offline|length == 1 else 'these rooms' }}.</strong>
+  <ul class="cw-list">
+    {% for o in decision.offline %}
+    <li><strong>{{ o.room }}</strong>{% if o.since %} since {{ o.since }}{% endif %}{% if o.last is not none %} — last reading {{ o.last | half }}°F{% endif %}</li>
+    {% endfor %}
+  </ul>
+  <span class="ce-hint">The room is excluded from the MPC cost (its band and any override have no effect) until the sensor reports again. Check the sensor's battery/connection in Home Assistant.</span>
+</div>
+{% endif %}
 <header>
   <h1>MPC Thermal Dashboard</h1>
   <span class="muted">refreshed {{ refreshed }}</span>
@@ -132,9 +143,9 @@
     <div class="card">
       <h3>Rooms vs band</h3>
       {% for r in decision.rooms %}
-      <div class="room-row tone-{{ r.tone }} {{ 'overridden' if r.overridden }}">
-        <span class="ac-name">{{ r.room }}{% if r.overridden %} <em class="ov-tag">OVR</em>{% endif %}</span>
-        <span>{{ r.temp | half }}°F</span>
+      <div class="room-row tone-{{ r.tone }} {{ 'overridden' if r.overridden }} {{ 'offline' if r.offline }}">
+        <span class="ac-name">{{ r.room }}{% if r.overridden %} <em class="ov-tag">OVR</em>{% endif %}{% if r.offline %} <em class="off-tag">OFFLINE</em>{% endif %}</span>
+        <span>{% if r.offline %}<span title="cached value — sensor not reporting">{{ r.temp | half }}°F (stale)</span>{% else %}{{ r.temp | half }}°F{% endif %}</span>
         <span class="muted">
           {% if r.overridden %}{{ r.min_f | half }}–{{ r.max_f | half }} ({{ r.sched_label }})
           {% elif r.wide %}off

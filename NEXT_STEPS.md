@@ -500,7 +500,10 @@ data during post-run analysis.
 
 - **File**: `thermal_control/logs/user_inputs.log` — CSV with columns `timestamp`, `event`, `room`, `value`.
 - **Events logged**: `away_activated`, `away_deactivated`, `presence_occupied`, `presence_unoccupied`,
-  `override_activated`, `override_changed`, `override_expired`, `override_cancelled`.
+  `override_activated`, `override_changed`, `override_expired`, `override_cancelled`,
+  `kill_activated`, `kill_deactivated`, `sensor_offline` (value = last real reading),
+  `sensor_online` (value = fresh reading). A sensor is "offline" once it is excluded from the
+  MPC cost (no reading for `STALE_LIMIT_MINUTES`, or none since startup).
 - The scheduler appends a row on every state change via `_append_user_event()`; the file is not
   rotated (same retention as the decisions log).
 

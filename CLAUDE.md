@@ -53,6 +53,23 @@ hot-reloads the yaml on its next tick (invalid yaml is skipped, last-good config
 
 The root `Dockerfile` is unrelated — it's the JupyterLab devcontainer image.
 
+**Live logs — look here first:** `/workspaces/InfluxDb/remote_logs/` (repo root, *not* `/remote_logs`)
+is a read-only CIFS mount of the server's `thermal_control/logs/`, updated live. No SSH needed.
+- `mpc_decision_log.csv` — one row per tick: `T_<room>`, `on_<ac>`, `cost_<combo>`, `proj_<room>`,
+  `missing_<room>` (1 = sensor stale, `T_<room>` is a cached value and the room was **excluded from
+  the cost**), `band_min_<room>`/`band_max_<room>` (band actually used that tick).
+  No size rotation; when the column set changes, the old file is archived as
+  `mpc_decision_log.<timestamp>.csv` and its rows are replayed into the new one.
+- `user_inputs.log` — event stream: overrides (activated/changed/expired/cancelled), presence, away,
+  kill switch, `sensor_offline`/`sensor_online`.
+- `scheduler.log` (+ `.1`…`.5`, 5 MB each) — the full text log, same as stdout: per-tick sensor
+  readings, comfort diagnosis, ranked combos, warnings. Survives redeploys.
+- `errors.log` / `config_warnings.log` — rejected / degraded config hot-reloads only.
+- `mpc_version.txt` — git SHA of the running scheduler.
+- Rows/lines written before the sensor-offline logging was deployed (Oct 2026) have no `missing_`/`band_` columns or sensor events, and
+  there is no `scheduler.log` from before then; for older text logs use `docker compose logs prod`
+  on the server (lost on each deploy).
+
 To analyze a live decision log, use the `live-analysis` skill (`.claude/skills/live-analysis/`) rather than ad-hoc pandas.
 
 ## Environment / secrets

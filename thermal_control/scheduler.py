@@ -24,6 +24,7 @@ Run from the repo root:
 """
 
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -67,6 +68,34 @@ SAFE_SETPOINT_F     = 76   # written to all ACs on any exit path
 DECISION_LOG    = ROOT / "logs" / "mpc_decision_log.csv"
 USER_EVENT_LOG  = ROOT / "logs" / "user_inputs.log"
 VERSION_FILE    = ROOT / "logs" / "mpc_version.txt"   # read by the dashboard footer
+# Full text log (same lines as stdout). Lives in the volume-mounted logs dir so
+# it survives container recreation (every deploy) and shows up in remote_logs/.
+TEXT_LOG        = ROOT / "logs" / "scheduler.log"
+TEXT_LOG_BYTES  = 5 * 1024 * 1024
+TEXT_LOG_BACKUPS = 5
+
+
+def _add_text_log_handler(path=TEXT_LOG):
+    """
+    Mirror the root logger to a size-rotated file (scheduler.log, .1 … .5).
+    Called from run() rather than at import so importing this module (tests)
+    never touches the filesystem. Best-effort: a failure leaves stdout logging
+    intact. Returns the handler, or None.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            path, maxBytes=TEXT_LOG_BYTES, backupCount=TEXT_LOG_BACKUPS,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.warning(f"Text log disabled — cannot open {path}: {exc}")
+        return None
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-8s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logging.root.addHandler(handler)
+    return handler
 
 
 def _write_safe_setpoints(house):
@@ -94,13 +123,29 @@ def _append_user_event(ts, event, room="", value=""):
                          presence_occupied, presence_unoccupied,
                          override_activated, override_changed,
                          override_expired, override_cancelled,
-                         kill_activated, kill_deactivated
+                         kill_activated, kill_deactivated,
+                         sensor_offline, sensor_online
       room       room_id (empty for away-mode events); ac_id for kill events
-      value      target_f for override events; empty otherwise
+      value      target_f for override events; for sensor_offline the last
+                 real reading (°F, empty if none since startup); for
+                 sensor_online the fresh reading; empty otherwise
     """
     log_writer.append_csv_row(USER_EVENT_LOG, {
         "timestamp": ts, "event": event, "room": room, "value": value,
     })
+
+
+def sensor_transitions(missing_rooms, prev_missing):
+    """
+    Rooms whose sensor just dropped out of / came back into the MPC cost.
+
+    missing_rooms : set from fill_missing() this tick.
+    prev_missing  : set from the previous tick (empty at startup, so a sensor
+                    already dead at startup is reported offline on the first tick).
+    Returns (went_offline, came_back) as sorted lists.
+    """
+    return (sorted(missing_rooms - prev_missing),
+            sorted(prev_missing - missing_rooms))
 
 
 def resolve_kill_switch(killed, killed_state, ac_ids, setpoints):
@@ -178,6 +223,7 @@ def run():
 
     local_tz = ZoneInfo(house["location"]["timezone"])
     _local_time = lambda *_: datetime.now(tz=local_tz).timetuple()
+    _add_text_log_handler()
     for handler in (logging.root.handlers
                     + config_reload.config_error_logger.handlers
                     + config_reload.config_warning_logger.handlers):
@@ -199,6 +245,7 @@ def run():
     override_tracker = {}  # {room_id: (target_f, started_at)} (items 7/7b)
     card_synced  = {}      # {room_id: last target the scheduler wrote} (item 7b)
     killed_state = {}      # {ac_id: killed_bool} (item 10); transitions logged
+    prev_missing = set()   # rooms excluded from MPC cost last tick; transitions logged
 
     # SIGTERM (systemd/Docker stop) raises SystemExit, which escapes the inner
     # except-Exception block and hits the outer finally → safe setpoints written.
@@ -241,6 +288,24 @@ def run():
                     logger.warning(
                         f"Missing sensors this tick: {', '.join(sorted(missing_rooms))}"
                     )
+                went_offline, came_back = sensor_transitions(missing_rooms, prev_missing)
+                event_ts = datetime.now(tz=local_tz).isoformat(timespec="seconds")
+                for room in went_offline:
+                    cached = sensor_cache.get(room)
+                    if cached:
+                        last_seen = cached[1].astimezone(local_tz).strftime("%Y-%m-%d %H:%M")
+                        detail = f"last reading {cached[0]:.1f}°F at {last_seen}"
+                    else:
+                        detail = "no reading since startup"
+                    logger.warning(f"SENSOR OFFLINE {room}: {detail} — "
+                                   f"excluded from MPC cost until it reports again")
+                    _append_user_event(event_ts, "sensor_offline", room=room,
+                                       value=f"{cached[0]:.2f}" if cached else "")
+                for room in came_back:
+                    logger.warning(f"SENSOR BACK ONLINE {room}: {state[room]:.1f}°F")
+                    _append_user_event(event_ts, "sensor_online", room=room,
+                                       value=f"{state[room]:.2f}")
+                prev_missing = set(missing_rooms)
 
                 # 2. Read AC states — mode + action logged each tick so anomalies
                 #    (unexpected mode drift) are visible in the log history.

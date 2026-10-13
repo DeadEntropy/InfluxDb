@@ -79,6 +79,12 @@ are displayed rounded to the nearest **0.5 °F**.
     unreadable sensor. An active override is applied on top of the schedule (so
     the band and the tint match what the MPC actually targets), flagged with an
     `OVR` tag, an amber left border, and the scheduled band shown in parentheses.
+  - **Offline sensors** — a room whose `missing_<room>` flag is set in the latest
+    row (sensor stale/absent → the MPC excluded it from the cost) gets an
+    `OFFLINE` tag and its temp shown as "(stale)", and a red banner at the top of
+    the page lists every such room with "since" + last reading, taken from the
+    latest `sensor_offline` event in `user_inputs.log`. In the plots, ticks with
+    `missing_<room>=1` are blanked so the cached value isn't drawn as a flat line.
   - **Header line** — outdoor temp, chosen-combo cost vs the cheapest
     alternative, `write_ok` health, last-tick time, and a STALE badge if the last
     tick is older than ~15 min.
@@ -117,7 +123,7 @@ are displayed rounded to the nearest **0.5 °F**.
 | `thermal_control/config/control.yaml` | schedule, bands, override duration |
 | `thermal_control/config/house.yaml`   | room list, AC-zone grouping |
 | `remote_logs/mpc_decision_log.csv`     | current + recent decisions, temps, costs |
-| `remote_logs/user_inputs.log`          | active overrides / presence events |
+| `remote_logs/user_inputs.log`          | active overrides / presence / sensor offline events |
 | `remote_logs/errors.log`               | "since" time for the config-error banner |
 
 (The amber config-warning banner reads no log — it re-walks the on-disk yaml on

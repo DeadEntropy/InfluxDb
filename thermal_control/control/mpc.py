@@ -321,6 +321,12 @@ class BangBangMPC:
                             what lets a later analysis reconstruct which combo
                             the penalty would have changed, if any)
           proj_<room>       predicted temperature at horizon end (°F)
+          missing_<room>    1 when the room's sensor was stale/absent this tick —
+                            T_<room> is then a cached/fallback value and the
+                            room was excluded from the discomfort cost
+          band_min_<room>,
+          band_max_<room>   comfort band the MPC actually optimised against this
+                            tick (schedule + presence + away + override, °F)
         """
         if not hasattr(self, "_last_results"):
             return {}
@@ -348,5 +354,12 @@ class BangBangMPC:
         final = chosen_states[-1]
         for room in self.rooms:
             record[f"proj_{room}"] = round(final.get(room, float("nan")), 2)
+
+        missing = getattr(self, "_missing_rooms", set())
+        targets = getattr(self, "_current_targets", self.targets)
+        for room in self.rooms:
+            record[f"missing_{room}"]  = int(room in missing)
+            record[f"band_min_{room}"] = targets[room]["min_f"]
+            record[f"band_max_{room}"] = targets[room]["max_f"]
 
         return record

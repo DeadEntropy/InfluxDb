@@ -35,6 +35,10 @@ def dash_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(dash, "HOUSE_YAML", cfg / "house.yaml")
     monkeypatch.setattr(dash, "CONTROL_YAML", cfg / "control.yaml")
     monkeypatch.setattr(dash, "ERROR_LOG", logs / "errors.log")
+    # Never fall through to the real remote_logs/ share: its live content
+    # (offline sensors, overrides) would make page-render tests flaky.
+    monkeypatch.setattr(dash, "DECISION_LOG", logs / "mpc_decision_log.csv")
+    monkeypatch.setattr(dash, "USER_INPUTS", logs / "user_inputs.log")
     monkeypatch.setattr(dash, "_last_good_cfg", {"control": None, "house": None})
     return cfg, logs
 
@@ -347,3 +351,66 @@ def test_plotly_js_served_locally(dash_paths):
     assert resp.status_code == 200
     assert resp.mimetype == "application/javascript"
     assert len(resp.data) > 100_000                  # the real bundle, not a stub
+
+
+# ── Offline sensors (decision log missing_<room>) ──────────────────────────────
+def _write_one_tick(path, **extra):
+    row = {"timestamp": datetime.now(TZ).isoformat(timespec="seconds"),
+           "T_outdoor": 80.0, "write_ok": True,
+           "on_bedroom_ac": 0, "sp_bedroom_ac": 84,
+           "T_nicolas_office": 74.75, "T_tv_room": 76.0, "cost_chosen": 1.0,
+           **extra}
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(row))
+        w.writeheader()
+        w.writerow(row)
+
+
+def test_offline_sensor_banner_and_room_badge(dash_paths):
+    _, logs = dash_paths
+    _write_one_tick(logs / "mpc_decision_log.csv",
+                    missing_nicolas_office=1, missing_tv_room=0)
+    with open(logs / "user_inputs.log", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "event", "room", "value"])
+        w.writerow(["2026-10-12T20:00:00-04:00", "sensor_offline", "nicolas_office", "75.10"])
+        w.writerow(["2026-10-12T20:30:00-04:00", "sensor_online", "nicolas_office", "75.30"])
+        w.writerow(["2026-10-12T22:08:06-04:00", "sensor_offline", "nicolas_office", "74.75"])
+
+    control, house, _, _ = dash.resolve_page_config()
+    d = dash.decision_summary(control, house, dash.modelled_rooms(house))
+    assert d["offline"] == [{"room": "nicolas_office", "since": "2026-10-12 22:08",
+                             "last": 74.75}]
+    rooms = {r["room"]: r for r in d["rooms"]}
+    assert rooms["nicolas_office"]["offline"] and rooms["nicolas_office"]["state"] == "offline"
+    assert not rooms["tv_room"]["offline"]
+
+    html = dash.app.test_client().get("/").get_data(as_text=True)
+    assert 'class="sensor-offline"' in html and "OFFLINE" in html
+    assert "since 2026-10-12 22:08" in html
+
+
+def test_no_offline_banner_without_missing_columns(dash_paths):
+    """Logs written before the missing_<room> columns existed → no banner."""
+    _, logs = dash_paths
+    _write_one_tick(logs / "mpc_decision_log.csv")
+    control, house, _, _ = dash.resolve_page_config()
+    assert dash.decision_summary(control, house, dash.modelled_rooms(house))["offline"] == []
+    html = dash.app.test_client().get("/").get_data(as_text=True)
+    assert 'class="sensor-offline"' not in html
+
+
+def test_onoff_data_blanks_temps_while_sensor_offline(dash_paths):
+    import pandas as pd
+    _, logs = dash_paths
+    log = logs / "mpc_decision_log.csv"
+    _write_synthetic_decision_log(log, days=1)
+    df = pd.read_csv(log)
+    df["missing_master_bedroom"] = [1 if i in (3, 4) else 0 for i in range(len(df))]
+    df.to_csv(log, index=False)
+
+    body = dash.app.test_client().get(
+        "/plots/onoff_data.json?ac=bedroom_ac&range=all").get_json()
+    temp = {r["id"]: r for r in body["rooms"]}["master_bedroom"]["temp"]
+    assert temp[3] is None and temp[4] is None
+    assert temp[2] == 72.0 and temp[5] == 72.0

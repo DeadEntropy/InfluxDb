@@ -75,3 +75,24 @@ def test_append_user_event_writes_row(monkeypatch, tmp_path):
         {"timestamp": "2026-07-13T10:05:00", "event": "override_activated",
          "room": "kitchen", "value": "77"},
     ]
+
+
+# ── sensor_transitions / text log ────────────────────────────────────────────
+def test_sensor_transitions():
+    assert sc.sensor_transitions({"a", "b"}, set()) == (["a", "b"], [])
+    assert sc.sensor_transitions({"b"}, {"a", "b"}) == ([], ["a"])
+    assert sc.sensor_transitions({"b", "c"}, {"a", "b"}) == (["c"], ["a"])
+    assert sc.sensor_transitions(set(), set()) == ([], [])
+
+
+def test_text_log_handler_writes_file(tmp_path):
+    import logging
+    path = tmp_path / "logs" / "scheduler.log"
+    handler = sc._add_text_log_handler(path)
+    try:
+        logging.getLogger("thermal_control.test").warning("SENSOR OFFLINE x")
+        handler.flush()
+        assert "SENSOR OFFLINE x" in path.read_text()
+    finally:
+        logging.root.removeHandler(handler)
+        handler.close()

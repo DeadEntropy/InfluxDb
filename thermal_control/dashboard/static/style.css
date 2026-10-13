@@ -304,3 +304,22 @@ footer code {
   color: #e8d3a0;
 }
 .config-warning .ce-hint { color: var(--muted); font-style: italic; }
+
+/* Offline-sensor banner + room badge: the MPC is excluding a room from its
+   cost because its sensor stopped reporting (decision log missing_<room>). */
+.sensor-offline {
+  padding: 12px 24px;
+  background: rgba(248, 81, 73, .14);
+  border-bottom: 2px solid var(--bad);
+  color: #ffd9d6;
+  font-size: 13px;
+}
+.sensor-offline strong:first-child { color: var(--bad); }
+.sensor-offline .cw-list { margin: 6px 0; padding-left: 22px; }
+.sensor-offline .ce-hint { color: var(--muted); font-style: italic; }
+.room-row.offline { background: rgba(139, 148, 158, 0.12); border-left-color: var(--bad); }
+.room-row.offline > span:nth-child(2) { color: var(--muted); font-style: italic; }
+.off-tag {
+  font-style: normal; font-size: 10px; font-weight: 700;
+  background: #5c1d1a; color: #ffb3ad; padding: 0 4px; border-radius: 3px;
+}

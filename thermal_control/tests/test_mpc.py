@@ -168,3 +168,15 @@ def test_decision_record_columns(mpc):
     # one cost_<3bit> column per enumerated combo
     assert sum(1 for k in rec if k.startswith("cost_") and k != "cost_chosen") == 8
     assert rec["switch_penalty"] == mpc.switch_penalty
+
+
+def test_decision_record_flags_missing_rooms_and_logs_bands(mpc):
+    room, other = mpc.rooms[0], mpc.rooms[1]
+    targets = {r: {"min_f": 75, "max_f": 77} for r in mpc.rooms}
+    targets[room] = {"min_f": 71, "max_f": 73}
+    mpc.solve({r: 78.0 for r in mpc.rooms}, [90.0] * mpc.horizon,
+              missing_rooms={room}, targets=targets)
+    rec = mpc.decision_record()
+    assert rec[f"missing_{room}"] == 1 and rec[f"missing_{other}"] == 0
+    assert (rec[f"band_min_{room}"], rec[f"band_max_{room}"]) == (71, 73)
+    assert (rec[f"band_min_{other}"], rec[f"band_max_{other}"]) == (75, 77)

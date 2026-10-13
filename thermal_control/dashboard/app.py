@@ -272,6 +272,31 @@ def to_float(s):
         return None
 
 
+def _offline_since():
+    """{room_id: (since_dt, last_value_str)} for rooms whose most recent
+    sensor_offline/sensor_online event in user_inputs.log is sensor_offline.
+    `since` is when the scheduler started excluding the room from the MPC cost
+    (or its restart, if the sensor was already dead then)."""
+    if not USER_INPUTS.exists():
+        return {}
+    latest = {}
+    with open(USER_INPUTS, newline="") as f:
+        for row in csv.DictReader(f):
+            event = (row.get("event") or "").strip()
+            room  = (row.get("room") or "").strip()
+            if not room or event not in ("sensor_offline", "sensor_online"):
+                continue
+            try:
+                ts = parse_ts(row["timestamp"])
+            except (ValueError, KeyError):
+                continue
+            if event == "sensor_offline":
+                latest[room] = (ts, (row.get("value") or "").strip())
+            else:
+                latest.pop(room, None)
+    return latest
+
+
 def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
     """Build the 'now' card + recent-ticks data from the decision log."""
     ovr_map = ovr_map or {}
@@ -314,13 +339,28 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
     # Per-room temp vs band — apply any active override on top of the schedule
     # (mirrors what the MPC actually targeted), keeping the scheduled band for
     # reference.
+    # Rooms the MPC excluded from its cost this tick (sensor stale/absent) —
+    # from the decision log's own missing_<room> flag, so it is exactly what
+    # the MPC saw; user_inputs.log only supplies the "since" for the banner.
+    since_map = _offline_since()
+    offline = []
     room_status = []
     for room in rooms:
         temp = to_float(last.get(f"T_{room}"))
+        missing = last.get(f"missing_{room}") == "1"
+        if missing:
+            since = since_map.get(room)
+            offline.append({
+                "room": room,
+                "since": since[0].strftime("%Y-%m-%d %H:%M") if since else None,
+                "last": to_float(since[1]) if since else temp,
+            })
         sched = band_now.get(room, dict(default))
         overridden = room in ovr_map
         band = apply_override(sched, ovr_map[room]) if overridden else sched
-        if temp is None:
+        if missing:
+            state = "offline"
+        elif temp is None:
             state = "?"
         elif is_wide(band):
             state = "off"
@@ -342,6 +382,7 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
             "state": state,
             "tone": tone,
             "overridden": overridden,
+            "offline": missing,
             "sched_label": band_label(sched),
         })
 
@@ -363,6 +404,7 @@ def decision_summary(control_cfg, house_cfg, rooms, ovr_map=None):
         "write_ok": last.get("write_ok") == "True",
         "acs": acs,
         "rooms": room_status,
+        "offline": offline,
         "cost_chosen": cost_chosen,
         "cheapest_alt": cheapest_alt,
     }
@@ -624,6 +666,10 @@ def _room_series(df, control_cfg, ac):
     out = []
     for room in room_ids:
         col = df[f"T_{room}"]
+        # Ticks where the sensor was offline carry a cached value, not a
+        # reading — blank them so the line breaks instead of drawing it flat.
+        if f"missing_{room}" in df.columns:
+            col = col.where(df[f"missing_{room}"].fillna(0).astype(int) != 1)
         lo = [r[room]["min_f"] for r in resolved]
         hi = [r[room]["max_f"] for r in resolved]
         out.append({
